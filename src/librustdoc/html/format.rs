@@ -654,6 +654,13 @@ pub(crate) fn href_with_root_path(
             // documented on their parent's page
             tcx.parent(did)
         }
+        DefKind::Field => {
+            let parent_id = tcx.parent(did);
+            match tcx.def_kind(parent_id) {
+                DefKind::Variant => tcx.parent(parent_id),
+                _ => parent_id,
+            }
+        }
         _ => did,
     };
     let cache = cx.cache();
@@ -1667,6 +1674,558 @@ impl clean::types::Term {
             clean::types::Term::Type(ty) => ty.print(cx),
             _ => todo!(),
         }
+    }
+}
+
+pub(crate) mod pretty_const {
+    #![allow(dead_code, unused_variables, unused_imports)] // @Temporary
+
+    use crate::{
+        formats::item_type::ItemType,
+        html::{escape::Escape, render::Context},
+    };
+    use rustc_hir::{
+        def::{CtorKind, DefKind},
+        def_id::DefId,
+    };
+    use rustc_middle::{
+        mir::{
+            interpret::{AllocRange, ConstValue, Pointer, Scalar},
+            ConstantKind,
+        },
+        ty::{
+            self, subst::GenericArg, util::is_doc_hidden, Const, ConstInt, DefIdTree, ParamConst,
+            ScalarInt, Ty, TypeFoldable, TypeVisitable, Visibility,
+        },
+    };
+    use rustc_target::abi::Size;
+    use std::fmt::{Error, Write};
+
+    fn format_constant_kind<'tcx>(
+        buffer: &mut String,
+        ct: ConstantKind<'tcx>,
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        match ct {
+            ConstantKind::Ty(ct) => format_const(buffer, ct, cx),
+            ConstantKind::Val(ct, ty) => format_const_value(buffer, ct, ty, cx),
+        }
+    }
+
+    pub(crate) fn format_const<'tcx>(
+        buffer: &mut String,
+        ct: Const<'tcx>,
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        match ct.kind() {
+            ty::ConstKind::Unevaluated(ty::Unevaluated {
+                def,
+                substs,
+                promoted: Some(promoted),
+            }) => {
+                // @Question do we want it to print like that?
+                format_path(buffer, def.did, substs, cx)?;
+                write!(buffer, "::{:?}", promoted)
+            }
+            ty::ConstKind::Unevaluated(ty::Unevaluated { def, substs, promoted: None }) => {
+                match cx.tcx().def_kind(def.did) {
+                    DefKind::Static(..) | DefKind::Const | DefKind::AssocConst => {
+                        format_path(buffer, def.did, substs, cx)
+                    }
+                    _ => {
+                        if def.is_local() {
+                            let span = cx.tcx().def_span(def.did);
+                            if let Ok(snip) = cx.tcx().sess.source_map().span_to_snippet(span) {
+                                write!(buffer, "{}", snip)
+                            } else {
+                                write!(buffer, "_")
+                            }
+                        } else {
+                            write!(buffer, "_")
+                        }
+                    }
+                }
+            }
+            ty::ConstKind::Param(ParamConst { name, .. }) => write!(buffer, "{}", name),
+            // @Beacon @Beacon @Task
+            // ty::ConstKind::Value(value) => format_const_value(buffer, value, ct.ty(), cx),
+            ty::ConstKind::Value(_value) => write!(buffer, "$VALTREE$"), // @Temporary
+            ty::ConstKind::Infer(_)
+            | ty::ConstKind::Bound(..)
+            | ty::ConstKind::Placeholder(_)
+            | ty::ConstKind::Error(_) => write!(buffer, "_"),
+        }
+    }
+
+    const ELLIPSIS: &str = r#"<span class="ellipsis">…</span>"#;
+
+    pub(crate) fn format_const_value<'tcx>(
+        buffer: &mut String,
+        ct: ConstValue<'tcx>,
+        ty: Ty<'tcx>,
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        let tcx = cx.tcx();
+        // let ct = tcx.lift(ct).unwrap(); // @Question necessary?
+        // let ty = tcx.lift(ty).unwrap();
+        let u8_type = tcx.types.u8;
+
+        match (ct, ty.kind()) {
+            // Byte/string slices, printed as (byte) string literals.
+            (ConstValue::Slice { data, start, end }, ty::Ref(_, inner, _)) => {
+                match inner.kind() {
+                    ty::Slice(t) => {
+                        if *t == u8_type {
+                            // The `inspect` here is okay since we checked the bounds, and there are
+                            // no relocations (we have an active slice reference here). We don't use
+                            // this result to affect interpreter execution.
+                            let byte_str = data
+                                .inner()
+                                .inspect_with_uninit_and_ptr_outside_interpreter(start..end);
+                            return format_byte_str(buffer, byte_str);
+                        }
+                    }
+                    ty::Str => {
+                        // The `inspect` here is okay since we checked the bounds, and there are no
+                        // relocations (we have an active `str` reference here). We don't use this
+                        // result to affect interpreter execution.
+                        let slice = data
+                            .inner()
+                            .inspect_with_uninit_and_ptr_outside_interpreter(start..end);
+
+                        // @Task better name, better limit
+                        const LIMIT: usize = 80;
+
+                        return if slice.len() > LIMIT {
+                            write!(buffer, r#""{ELLIPSIS}""#)
+                        } else {
+                            // @Task improve perf
+                            write!(
+                                buffer,
+                                "{}",
+                                Escape(&format!("{:?}", String::from_utf8_lossy(slice)))
+                            )
+                        };
+                    }
+                    _ => {}
+                }
+            }
+            (ConstValue::ByRef { alloc, offset }, ty::Array(t, n)) if *t == u8_type => {
+                let n = n.kind().try_to_bits(tcx.data_layout.pointer_size).unwrap();
+                // cast is ok because we already checked for pointer size (32 or 64 bit) above
+                let range = AllocRange { start: offset, size: Size::from_bytes(n) };
+                let byte_str = alloc.inner().get_bytes(&tcx, range).unwrap();
+                write!(buffer, "*")?;
+                return format_byte_str(buffer, byte_str);
+            }
+
+            // Aggregates, printed as array/tuple/struct/variant construction syntax.
+            //
+            // NB: the `has_param_types_or_consts` check ensures that we can use
+            // the `destructure_const` query with an empty `ty::ParamEnv` without
+            // introducing ICEs (e.g. via `layout_of`) from missing bounds.
+            // E.g. `transmute([0usize; 2]): (u8, *mut T)` needs to know `T: Sized`
+            // to be able to destructure the tuple into `(0u8, *mut T)
+            (_, ty::Array(..) | ty::Tuple(..) | ty::Adt(..)) if !ty.has_param_types_or_consts() => {
+                // let ct = tcx.lift(ct).unwrap();
+                // let ty = tcx.lift(ty).unwrap();
+                let Some(contents) = tcx.try_destructure_mir_constant(
+                    ty::ParamEnv::reveal_all()
+                        .and(ConstantKind::Val(ct, ty))
+                ) else {
+                    // Fall back to debug pretty printing for invalid constants.
+                    return write!(buffer, "{:?}", ct);
+                };
+
+                // @Task better name
+                const LIMIT: usize = 12;
+
+                let mut fields = contents.fields.iter().copied();
+                match *ty.kind() {
+                    ty::Array(..) => {
+                        write!(buffer, "[")?;
+
+                        if contents.fields.len() > LIMIT {
+                            write!(buffer, "{ELLIPSIS}")?;
+                        } else if let Some(first) = fields.next() {
+                            format_constant_kind(buffer, first, cx)?;
+                            for field in fields {
+                                buffer.write_str(", ")?;
+                                format_constant_kind(buffer, field, cx)?;
+                            }
+                        }
+
+                        write!(buffer, "]")?;
+                    }
+                    ty::Tuple(..) => {
+                        write!(buffer, "(")?;
+                        if let Some(first) = fields.next() {
+                            format_constant_kind(buffer, first, cx)?;
+                            for field in fields {
+                                buffer.write_str(", ")?;
+                                format_constant_kind(buffer, field, cx)?;
+                            }
+                        }
+                        if contents.fields.len() == 1 {
+                            write!(buffer, ",")?;
+                        }
+                        write!(buffer, ")")?;
+                    }
+                    // @Question should we get rid of this? when is this reachable?
+                    ty::Adt(def, _) if def.variants().is_empty() => {
+                        typed_value(
+                            buffer,
+                            |buffer| write!(buffer, "unreachable()"),
+                            |buffer| format_type(buffer, ty),
+                            ": ",
+                        )?;
+                    }
+                    ty::Adt(def, substs) => {
+                        let document_private = cx.shared.document_private;
+                        let document_hidden = cx.shared.document_hidden;
+
+                        let variant_idx =
+                            contents.variant.expect("destructed const of adt without variant idx");
+                        let variant_def = &def.variant(variant_idx);
+                        format_path(buffer, variant_def.def_id, substs, cx)?;
+
+                        match variant_def.ctor_kind {
+                            CtorKind::Const => {}
+                            CtorKind::Fn => {
+                                write!(buffer, "(")?;
+                                let mut first = true;
+                                for (field_def, field) in
+                                    std::iter::zip(&variant_def.fields, fields)
+                                {
+                                    if !first {
+                                        write!(buffer, ", ")?;
+                                    }
+                                    first = false;
+
+                                    // @Question should I use
+                                    //     cache.access_levels.is_public(did)
+                                    //     cache.document_private
+                                    // @Question is the visibility-check correct?
+                                    if is_doc_hidden(tcx, field_def.did) && !document_hidden
+                                        || field_def.vis != Visibility::Public && !document_private
+                                    {
+                                        write!(buffer, "_")?;
+                                        continue;
+                                    }
+
+                                    format_constant_kind(buffer, field, cx)?;
+                                }
+                                // @Beacon @Beacon @Question should we also print sth if
+                                // the thingy is `#[non_exhaustive]`?
+                                write!(buffer, ")")?;
+                            }
+                            CtorKind::Fictive => {
+                                write!(buffer, " {{ ")?;
+                                let mut first = true;
+                                let mut contains_private_or_hidden_fields = false;
+                                for (field_def, field) in
+                                    std::iter::zip(&variant_def.fields, fields)
+                                {
+                                    // @Question is the visibility-check correct?
+                                    // @Question should I use
+                                    //     cache.access_levels.is_public(did)
+                                    //     cache.document_private
+                                    if is_doc_hidden(tcx, field_def.did) && !document_hidden
+                                        || field_def.vis != Visibility::Public && !document_private
+                                    {
+                                        contains_private_or_hidden_fields = true;
+                                        continue;
+                                    }
+
+                                    if !first {
+                                        write!(buffer, ", ")?;
+                                    }
+                                    first = false;
+
+                                    match super::href(field_def.did, cx) {
+                                        Ok((mut url, ..)) => {
+                                            write!(url, "#")?;
+                                            let parent_id = tcx.parent(field_def.did);
+                                            if tcx.def_kind(parent_id) == DefKind::Variant {
+                                                write!(
+                                                    url,
+                                                    "{}.{}.field",
+                                                    ItemType::Variant,
+                                                    tcx.item_name(parent_id)
+                                                )
+                                            } else {
+                                                write!(url, "{}", ItemType::StructField)
+                                            }?;
+
+                                            write!(url, ".{}", field_def.name)?;
+
+                                            write!(
+                                                buffer,
+                                                r#"<a class="{}" href="{}" title="field {}">{}</a>"#,
+                                                ItemType::StructField,
+                                                url,
+                                                field_def.name,
+                                                field_def.name,
+                                            )
+                                        }
+                                        Err(_) => write!(buffer, "{}", field_def.name),
+                                    }?;
+
+                                    write!(buffer, ": ")?;
+
+                                    format_constant_kind(buffer, field, cx)?;
+                                }
+
+                                // @Beacon @Beacon @Question should we also print ellipses if
+                                // the thingy is `#[non_exhaustive]`?
+                                if contains_private_or_hidden_fields {
+                                    if !first {
+                                        write!(buffer, ", ")?;
+                                    }
+                                    write!(buffer, "..")?;
+                                }
+
+                                write!(buffer, " }}")?;
+                            }
+                        }
+                    }
+                    _ => unreachable!(),
+                }
+
+                return Ok(());
+            }
+
+            (ConstValue::Scalar(scalar), _) => {
+                return format_const_scalar(buffer, scalar, ty, cx);
+            }
+            (ConstValue::ZeroSized, ty::FnDef(d, s)) => {
+                return format_path(buffer, *d, s, cx);
+            }
+
+            // FIXME(oli-obk, fmease): also pretty print arrays and other aggregate constants by
+            // reading their fields instead of just dumping the memory.
+            _ => {}
+        }
+
+        // @Question should we get rid of this?
+        // fallback
+        write!(buffer, "{:?}", ct)?;
+
+        Ok(())
+    }
+
+    fn format_path<'tcx>(
+        buffer: &mut String,
+        def_id: DefId,
+        substs: &'tcx [GenericArg<'tcx>],
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        let tcx = cx.tcx();
+
+        if let Ok((mut url, item_type, path)) = super::href(def_id, cx) {
+            let mut needs_fragment = true;
+            let item_type = match tcx.def_kind(def_id) {
+                DefKind::AssocFn => match tcx.associated_item(def_id).defaultness.has_value() {
+                    true => ItemType::Method,
+                    false => ItemType::TyMethod,
+                },
+                DefKind::AssocTy => ItemType::AssocType,
+                DefKind::AssocConst => ItemType::AssocConst,
+                DefKind::Variant => ItemType::Variant,
+                _ => {
+                    needs_fragment = false;
+                    item_type
+                }
+            };
+
+            let name = tcx.item_name(def_id);
+            let mut path = super::join_with_double_colon(&path);
+
+            if needs_fragment {
+                write!(url, "#{}.{}", item_type, name)?;
+                write!(path, "::{}", name)?;
+            }
+
+            write!(
+                buffer,
+                r#"<a class="{}" href="{}" title="{} {}">{}</a>"#,
+                item_type, url, item_type, path, name,
+            )
+        } else {
+            // do not use substitutions for a more concise output
+            write!(buffer, "{}", tcx.def_path_str(def_id))
+        }
+    }
+
+    fn format_byte_str(buffer: &mut String, byte_str: &[u8]) -> Result<(), Error> {
+        // @Task find better limit
+        const LIMIT: usize = 80;
+
+        buffer.write_str("b\"")?;
+
+        if byte_str.len() > LIMIT {
+            write!(buffer, "{ELLIPSIS}")?;
+        } else {
+            for &char in byte_str {
+                for char in std::ascii::escape_default(char) {
+                    // @Task improve
+                    write!(buffer, "{}", Escape(&char::from(char).to_string()))?;
+                }
+            }
+        }
+
+        buffer.write_str("\"")
+    }
+
+    fn format_const_scalar<'tcx>(
+        buffer: &mut String,
+        scalar: Scalar,
+        ty: Ty<'tcx>,
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        match scalar {
+            Scalar::Ptr(ptr, _size) => format_const_scalar_ptr(buffer, ptr, ty),
+            Scalar::Int(int) => format_const_scalar_int(buffer, int, ty, cx),
+        }
+    }
+
+    // @Question necessary?
+    fn format_const_scalar_ptr(buffer: &mut String, ptr: Pointer, ty: Ty<'_>) -> Result<(), Error> {
+        // let (alloc_id, offset) = ptr.into_parts();
+        // match ty.kind() {
+        //     // Byte strings (&[u8; N])
+        //     ty::Ref(_, inner, _) => {
+        //         if let ty::Array(elem, len) = inner.kind() {
+        //             if let ty::Uint(ty::UintTy::U8) = elem.kind() {
+        //                 if let ty::ConstKind::Value(ConstValue::Scalar(int)) = len.val() {
+        //                     match self.tcx().get_global_alloc(alloc_id) {
+        //                         Some(GlobalAlloc::Memory(alloc)) => {
+        //                             let len = int.assert_bits(self.tcx().data_layout.pointer_size);
+        //                             let range =
+        //                                 AllocRange { start: offset, size: Size::from_bytes(len) };
+        //                             if let Ok(byte_str) =
+        //                                 alloc.inner().get_bytes(&self.tcx(), range)
+        //                             {
+        //                                 p!(pretty_print_byte_str(byte_str))
+        //                             } else {
+        //                                 p!("<too short allocation>")
+        //                             }
+        //                         }
+        //                         // FIXME: for statics and functions, we could in principle print more detail.
+        //                         Some(GlobalAlloc::Static(def_id)) => {
+        //                             p!(write("<static({:?})>", def_id))
+        //                         }
+        //                         Some(GlobalAlloc::Function(_)) => p!("<function>"),
+        //                         None => p!("<dangling pointer>"),
+        //                     }
+        //                     return Ok(self);
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     ty::FnPtr(_) => {
+        //         // FIXME: We should probably have a helper method to share code with the "Byte strings"
+        //         // printing above (which also has to handle pointers to all sorts of things).
+        //         if let Some(GlobalAlloc::Function(instance)) = tcx.get_global_alloc(alloc_id)
+        //         {
+        //             self = self.typed_value(
+        //                 |this| this.print_value_path(instance.def_id(), instance.substs),
+        //                 |this| this.print_type(ty),
+        //                 " as ",
+        //             )?;
+        //             return Ok(());
+        //         }
+        //     }
+        //     _ => {}
+        // }
+        // // Any pointer values not covered by a branch above
+        // self = self.pretty_print_const_pointer(ptr, ty, print_ty)?;
+        write!(buffer, "/*const_scalar_ptr*/")?; // @Temporary
+        Ok(())
+    }
+
+    fn format_const_scalar_int<'tcx>(
+        buffer: &mut String,
+        int: ScalarInt,
+        ty: Ty<'tcx>,
+        cx: &Context<'tcx>,
+    ) -> Result<(), Error> {
+        match ty.kind() {
+            // Bool
+            ty::Bool if int == ScalarInt::FALSE => write!(buffer, "false"),
+            ty::Bool if int == ScalarInt::TRUE => write!(buffer, "true"),
+            // Float
+            ty::Float(ty::FloatTy::F32) => {
+                // @Bug TryFrom impl doesn't exist for some reason
+                // write!(buffer, "{}f32", rustc_apfloat::ieee::Single::try_from(int).unwrap())
+                // @Temporary
+                write!(buffer, "/*f32*/")
+            }
+            ty::Float(ty::FloatTy::F64) => {
+                // @Bug TryFrom impl doesn't exist for some reason
+                // write!(buffer, "{}f64", rustc_apfloat::ieee::Double::try_from(int).unwrap())
+                // @Temporary
+                write!(buffer, "/*f64*/")
+            }
+            // Int
+            ty::Uint(_) | ty::Int(_) => {
+                let int =
+                    ConstInt::new(int, matches!(ty.kind(), ty::Int(_)), ty.is_ptr_sized_integral());
+                write!(buffer, "{:?}", int)
+            }
+            // Char
+            ty::Char if char::try_from(int).is_ok() => {
+                write!(buffer, "{:?}", char::try_from(int).unwrap())
+            }
+            // Pointer types
+            ty::Ref(..) | ty::RawPtr(_) | ty::FnPtr(_) => {
+                let data = int.assert_bits(cx.tcx().data_layout.pointer_size);
+                typed_value(
+                    buffer,
+                    |buffer| write!(buffer, "0x{:x}", data),
+                    |buffer| format_type(buffer, ty),
+                    " as ",
+                )
+            }
+            // Nontrivial types with scalar bit representation
+            _ => {
+                // @Task link to transmute
+                if int.size() == Size::ZERO {
+                    write!(buffer, "transmute(())")
+                } else {
+                    write!(buffer, "transmute(0x{:x})", int)
+                }
+            }
+        }
+    }
+
+    // @Task get rid of this
+    fn format_type(buffer: &mut String, ty: Ty<'_>) -> Result<(), Error> {
+        // let type_length_limit = tcx.type_length_limit();
+        // if type_length_limit.value_within_limit(self.printed_type_count) {
+        //     self.printed_type_count += 1;
+        //     self.pretty_print_type(ty)
+        // } else {
+        //     write!(self, "...")?;
+        //     Ok(self)
+        // }
+        // @Temporary
+        write!(buffer, "/*type*/")
+    }
+
+    /// Prints `{f: t}` or `{f as t}` depending on the `conversion` argument
+    // @Task get rid of this!
+    fn typed_value(
+        buffer: &mut String,
+        f: impl FnOnce(&mut String) -> Result<(), Error>,
+        t: impl FnOnce(&mut String) -> Result<(), Error>,
+        conversion: &str,
+    ) -> Result<(), Error> {
+        buffer.write_str("{")?;
+        f(buffer)?;
+        buffer.write_str(conversion)?;
+        t(buffer)?;
+        buffer.write_str("}")
     }
 }
 

@@ -36,7 +36,7 @@ use rustc_typeck::check::intrinsic::intrinsic_operation_unsafety;
 use crate::clean::cfg::Cfg;
 use crate::clean::external_path;
 use crate::clean::inline::{self, print_inlined_const};
-use crate::clean::utils::{is_literal_expr, print_const_expr, print_evaluated_const};
+use crate::clean::utils::is_literal_expr;
 use crate::clean::Clean;
 use crate::core::DocContext;
 use crate::formats::cache::Cache;
@@ -2338,6 +2338,10 @@ impl Constant {
         self.kind.value(tcx)
     }
 
+    pub(crate) fn value_html(&self, cx: &Context<'_>) -> Option<String> {
+        self.kind.value_html(cx)
+    }
+
     pub(crate) fn is_literal(&self, tcx: TyCtxt<'_>) -> bool {
         self.kind.is_literal(tcx)
     }
@@ -2349,7 +2353,7 @@ impl ConstantKind {
             ConstantKind::TyConst { ref expr } => expr.clone(),
             ConstantKind::Extern { def_id } => print_inlined_const(tcx, def_id),
             ConstantKind::Local { body, .. } | ConstantKind::Anonymous { body } => {
-                print_const_expr(tcx, body)
+                super::utils::print_const_expr(tcx, body)
             }
         }
     }
@@ -2358,7 +2362,16 @@ impl ConstantKind {
         match *self {
             ConstantKind::TyConst { .. } | ConstantKind::Anonymous { .. } => None,
             ConstantKind::Extern { def_id } | ConstantKind::Local { def_id, .. } => {
-                print_evaluated_const(tcx, def_id)
+                super::utils::print_evaluated_const(tcx, def_id)
+            }
+        }
+    }
+
+    pub(crate) fn value_html(&self, cx: &Context<'_>) -> Option<String> {
+        match *self {
+            ConstantKind::TyConst { .. } | ConstantKind::Anonymous { .. } => None,
+            ConstantKind::Extern { def_id } | ConstantKind::Local { def_id, .. } => {
+                super::utils::print_evaluated_const_html(def_id, cx)
             }
         }
     }

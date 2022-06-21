@@ -276,6 +276,26 @@ pub(crate) fn print_evaluated_const(tcx: TyCtxt<'_>, def_id: DefId) -> Option<St
     })
 }
 
+// @Task migrate to mod html::format
+// @Task don't return Option<_> anymore
+pub(crate) fn print_evaluated_const_html(
+    def_id: DefId,
+    cx: &crate::html::render::Context<'_>,
+) -> Option<String> {
+    cx.tcx().const_eval_poly(def_id).ok().and_then(|val| {
+        let mut buffer = String::new();
+        // @Task don't call into that module!
+        crate::html::format::pretty_const::format_const_value(
+            &mut buffer,
+            val,
+            cx.tcx().type_of(def_id),
+            cx,
+        )
+        .ok()?;
+        Some(buffer)
+    })
+}
+
 fn format_integer_with_underscore_sep(num: &str) -> String {
     let num_chars: Vec<_> = num.chars().collect();
     let mut num_start_index = if num_chars.get(0) == Some(&'-') { 1 } else { 0 };
@@ -302,6 +322,7 @@ fn format_integer_with_underscore_sep(num: &str) -> String {
         .collect()
 }
 
+#[allow(dead_code)] // @Temporary
 fn print_const_with_custom_print_scalar(tcx: TyCtxt<'_>, ct: mir::ConstantKind<'_>) -> String {
     // Use a slightly different format for integer types which always shows the actual value.
     // For all other types, fallback to the original `pretty_print_const`.

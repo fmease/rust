@@ -112,6 +112,10 @@ pub(crate) struct SharedContext<'tcx> {
     /// Storage for the errors produced while generating documentation so they
     /// can be printed together at the end.
     errors: Receiver<String>,
+    /// Document items that have lower than `pub` visibility.
+    pub(crate) document_private: bool,
+    /// Document items that have `doc(hidden)`.
+    pub(crate) document_hidden: bool,
     /// `None` by default, depends on the `generate-redirect-map` option flag. If this field is set
     /// to `Some(...)`, it'll store redirections and then generate a JSON file at the top level of
     /// the crate.
@@ -404,6 +408,8 @@ impl<'tcx> FormatRenderer<'tcx> for Context<'tcx> {
             resource_suffix,
             static_root_path,
             unstable_features,
+            document_private,
+            document_hidden,
             generate_redirect_map,
             show_type_layout,
             generate_link_to_definition,
@@ -488,6 +494,8 @@ impl<'tcx> FormatRenderer<'tcx> for Context<'tcx> {
             playground,
             all: RefCell::new(AllTypes::new()),
             errors: receiver,
+            document_private,
+            document_hidden,
             redirections: if generate_redirect_map { Some(Default::default()) } else { None },
             show_type_layout,
             span_correspondance_map: matches,
