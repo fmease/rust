@@ -103,7 +103,7 @@ pub fn expand_test_or_bench(
     };
 
     // Note: non-associated fn items are already handled by `expand_test_or_bench`
-    if !matches!(item.kind, ast::ItemKind::Fn(_)) {
+    let ast::ItemKind::Fn(fn_) = &item.kind else {
         let diag = &cx.sess.parse_sess.span_diagnostic;
         let msg = "the `#[test]` attribute may only be used on a non-associated function";
         let mut err = match item.kind {
@@ -121,7 +121,7 @@ pub fn expand_test_or_bench(
             .emit();
 
         return vec![Annotatable::Item(item)];
-    }
+    };
 
     // has_*_signature will report any errors in the type so compilation
     // will fail. We shouldn't try to expand in this case because the errors
@@ -132,7 +132,9 @@ pub fn expand_test_or_bench(
         return vec![Annotatable::Item(item)];
     }
 
-    let (sp, attr_sp) = (cx.with_def_site_ctxt(item.span), cx.with_def_site_ctxt(attr_sp));
+    let sp = cx.with_def_site_ctxt(item.span);
+    let ret_ty_sp = cx.with_def_site_ctxt(fn_.sig.decl.output.span());
+    let attr_sp = cx.with_def_site_ctxt(attr_sp);
 
     let test_id = Ident::new(sym::test, attr_sp);
 
@@ -166,51 +168,68 @@ pub fn expand_test_or_bench(
     // creates $name: $expr
     let field = |name, expr| cx.field_imm(sp, Ident::from_str_and_span(name, sp), expr);
 
+    let test_fn_body = |expr| match &fn_.sig.decl.output {
+        ast::FnRetTy::Ty(ty) => cx.expr_block(cx.block(
+            sp,
+            vec![
+                cx.stmt_let_type_only(
+                    sp,
+                    cx.ty_path(cx.path_all(
+                        ret_ty_sp,
+                        false,
+                        vec![test_id, Ident::from_str_and_span("AssertIsTermination", sp)],
+                        vec![ast::GenericArg::Type(ty.clone())],
+                    )),
+                ),
+                cx.stmt_expr(expr),
+            ],
+        )),
+        ast::FnRetTy::Default(_) => expr,
+    };
+
     let test_fn = if is_bench {
         // A simple ident for a lambda
         let b = Ident::from_str_and_span("b", attr_sp);
+
+        // self::test::assert_test_result(
+        let assertion = cx.expr_call(
+            sp,
+            cx.expr_path(test_path("assert_test_result")),
+            vec![
+                // super::$test_fn(b)
+                cx.expr_call(
+                    sp,
+                    cx.expr_path(cx.path(sp, vec![item.ident])),
+                    vec![cx.expr_ident(sp, b)],
+                ),
+            ],
+        ); // )
 
         cx.expr_call(
             sp,
             cx.expr_path(test_path("StaticBenchFn")),
             vec![
-                // |b| self::test::assert_test_result(
-                cx.lambda1(
-                    sp,
-                    cx.expr_call(
-                        sp,
-                        cx.expr_path(test_path("assert_test_result")),
-                        vec![
-                            // super::$test_fn(b)
-                            cx.expr_call(
-                                sp,
-                                cx.expr_path(cx.path(sp, vec![item.ident])),
-                                vec![cx.expr_ident(sp, b)],
-                            ),
-                        ],
-                    ),
-                    b,
-                ), // )
+                // |b|
+                cx.lambda1(sp, test_fn_body(assertion), b),
             ],
         )
     } else {
+        // test::assert_test_result(
+        let assertion = cx.expr_call(
+            sp,
+            cx.expr_path(test_path("assert_test_result")),
+            vec![
+                // $test_fn()
+                cx.expr_call(sp, cx.expr_path(cx.path(sp, vec![item.ident])), vec![]),
+            ],
+        ); // )
+
         cx.expr_call(
             sp,
             cx.expr_path(test_path("StaticTestFn")),
             vec![
-                // || {
-                cx.lambda0(
-                    sp,
-                    // test::assert_test_result(
-                    cx.expr_call(
-                        sp,
-                        cx.expr_path(test_path("assert_test_result")),
-                        vec![
-                            // $test_fn()
-                            cx.expr_call(sp, cx.expr_path(cx.path(sp, vec![item.ident])), vec![]), // )
-                        ],
-                    ), // }
-                ), // )
+                // ||
+                cx.lambda0(sp, test_fn_body(assertion)),
             ],
         )
     };
