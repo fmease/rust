@@ -176,6 +176,7 @@ impl BoxPointers {
 
 impl<'tcx> LateLintPass<'tcx> for BoxPointers {
     fn check_item(&mut self, cx: &LateContext<'_>, it: &hir::Item<'_>) {
+        // FIXME(fmease): Preexisting: Shouldn't we walk the ty of Consts? even w/o `generic_consts`?
         match it.kind {
             hir::ItemKind::Fn(..)
             | hir::ItemKind::TyAlias(..)
@@ -1531,7 +1532,8 @@ declare_lint_pass!(
 impl<'tcx> LateLintPass<'tcx> for UnusedBrokenConst {
     fn check_item(&mut self, cx: &LateContext<'_>, it: &hir::Item<'_>) {
         match it.kind {
-            hir::ItemKind::Const(_, body_id) => {
+            // FIXME(fmease): Is it okay to discard the generics here?
+            hir::ItemKind::Const(_, _, body_id) => {
                 let def_id = cx.tcx.hir().body_owner_def_id(body_id).to_def_id();
                 // trigger the query once for all constants since that will already report the errors
                 cx.tcx.ensure().const_eval_poly(def_id);
