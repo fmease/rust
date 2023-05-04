@@ -654,6 +654,7 @@ impl<'tcx> TypeErrCtxtExt<'tcx> for TypeErrCtxt<'_, 'tcx> {
                         | hir::ItemKind::Impl(hir::Impl { generics, .. })
                         | hir::ItemKind::Fn(_, generics, _)
                         | hir::ItemKind::TyAlias(_, generics)
+                        | hir::ItemKind::Const(_, generics, _)
                         | hir::ItemKind::TraitAlias(generics, _)
                         | hir::ItemKind::OpaqueTy(hir::OpaqueTy { generics, .. }),
                     ..
@@ -719,6 +720,7 @@ impl<'tcx> TypeErrCtxtExt<'tcx> for TypeErrCtxt<'_, 'tcx> {
                         | hir::ItemKind::Impl(hir::Impl { generics, .. })
                         | hir::ItemKind::Fn(_, generics, _)
                         | hir::ItemKind::TyAlias(_, generics)
+                        | hir::ItemKind::Const(_, generics, _)
                         | hir::ItemKind::TraitAlias(generics, _)
                         | hir::ItemKind::OpaqueTy(hir::OpaqueTy { generics, .. }),
                     ..
