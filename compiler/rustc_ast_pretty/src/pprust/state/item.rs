@@ -32,7 +32,7 @@ impl<'a> State<'a> {
             }
             ast::ForeignItemKind::Static(ty, mutbl, body) => {
                 let def = ast::Defaultness::Final;
-                self.print_item_const(ident, Some(*mutbl), ty, body.as_deref(), vis, def);
+                self.print_item_const(ident, Some(*mutbl), None, ty, body.as_deref(), vis, def);
             }
             ast::ForeignItemKind::TyAlias(box ast::TyAlias {
                 defaultness,
@@ -67,6 +67,7 @@ impl<'a> State<'a> {
         &mut self,
         ident: Ident,
         mutbl: Option<ast::Mutability>,
+        generics: Option<&ast::Generics>,
         ty: &ast::Ty,
         body: Option<&ast::Expr>,
         vis: &ast::Visibility,
@@ -82,6 +83,9 @@ impl<'a> State<'a> {
         };
         self.word_space(leading);
         self.print_ident(ident);
+        if let Some(generics) = generics {
+            self.print_generic_params(&generics.params);
+        }
         self.word_space(":");
         self.print_type(ty);
         if body.is_some() {
@@ -91,6 +95,9 @@ impl<'a> State<'a> {
         if let Some(body) = body {
             self.word_space("=");
             self.print_expr(body);
+        }
+        if let Some(generics) = generics {
+            self.print_where_clause(&generics.where_clause);
         }
         self.word(";");
         self.end(); // end the outer cbox
@@ -162,16 +169,18 @@ impl<'a> State<'a> {
                 self.print_item_const(
                     item.ident,
                     Some(*mutbl),
+                    None,
                     ty,
                     body.as_deref(),
                     &item.vis,
                     def,
                 );
             }
-            ast::ItemKind::Const(box ast::ConstItem { defaultness, ty, expr }) => {
+            ast::ItemKind::Const(box ast::ConstItem { defaultness, generics, ty, expr }) => {
                 self.print_item_const(
                     item.ident,
                     None,
+                    Some(generics),
                     ty,
                     expr.as_deref(),
                     &item.vis,
@@ -515,8 +524,16 @@ impl<'a> State<'a> {
             ast::AssocItemKind::Fn(box ast::Fn { defaultness, sig, generics, body }) => {
                 self.print_fn_full(sig, ident, generics, vis, *defaultness, body.as_deref(), attrs);
             }
-            ast::AssocItemKind::Const(box ast::ConstItem { defaultness, ty, expr }) => {
-                self.print_item_const(ident, None, ty, expr.as_deref(), vis, *defaultness);
+            ast::AssocItemKind::Const(box ast::ConstItem { defaultness, generics, ty, expr }) => {
+                self.print_item_const(
+                    ident,
+                    None,
+                    Some(generics),
+                    ty,
+                    expr.as_deref(),
+                    vis,
+                    *defaultness,
+                );
             }
             ast::AssocItemKind::Type(box ast::TyAlias {
                 defaultness,

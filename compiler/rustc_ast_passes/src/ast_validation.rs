@@ -1338,6 +1338,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             self.check_item_named(item.ident, "const");
         }
 
+        // FIXME(generic_consts): Pretty sure we need to visit the generics of consts here, too.
         match &item.kind {
             AssocItemKind::Type(box TyAlias { generics, bounds, ty, .. })
                 if ctxt == AssocCtxt::Trait =>

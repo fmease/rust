@@ -227,7 +227,7 @@ impl<'a> Parser<'a> {
             // STATIC ITEM
             self.bump(); // `static`
             let m = self.parse_mutability();
-            let (ident, ty, expr) = self.parse_item_global(Some(m))?;
+            let (ident, _, ty, expr) = self.parse_item_global(Some(m))?;
             (ident, ItemKind::Static(Box::new(StaticItem { ty, mutability: m, expr })))
         } else if let Const::Yes(const_span) = self.parse_constness(Case::Sensitive) {
             // CONST ITEM
@@ -236,8 +236,16 @@ impl<'a> Parser<'a> {
                 self.recover_const_impl(const_span, attrs, def_())?
             } else {
                 self.recover_const_mut(const_span);
-                let (ident, ty, expr) = self.parse_item_global(None)?;
-                (ident, ItemKind::Const(Box::new(ConstItem { defaultness: def_(), ty, expr })))
+                let (ident, generics, ty, expr) = self.parse_item_global(None)?;
+                (
+                    ident,
+                    ItemKind::Const(Box::new(ConstItem {
+                        defaultness: def_(),
+                        generics,
+                        ty,
+                        expr,
+                    })),
+                )
             }
         } else if self.check_keyword(kw::Trait) || self.check_auto_or_unsafe_trait_item() {
             // TRAIT ITEM
@@ -878,6 +886,7 @@ impl<'a> Parser<'a> {
                             self.sess.emit_err(errors::AssociatedStaticItemNotAllowed { span });
                             AssocItemKind::Const(Box::new(ConstItem {
                                 defaultness: Defaultness::Final,
+                                generics: Generics::default(),
                                 ty,
                                 expr,
                             }))
@@ -892,7 +901,7 @@ impl<'a> Parser<'a> {
 
     /// Parses a `type` alias with the following grammar:
     /// ```ebnf
-    /// TypeAlias = "type" Ident Generics {":" GenericBounds}? {"=" Ty}? ";" ;
+    /// TypeAlias = "type" Ident Generics (":" GenericBounds)? WhereClause ("=" Ty)? WhereClause ";" ;
     /// ```
     /// The `"type"` has already been eaten.
     fn parse_type_alias(&mut self, defaultness: Defaultness) -> PResult<'a, ItemInfo> {
@@ -1220,28 +1229,103 @@ impl<'a> Parser<'a> {
         Ok(impl_info)
     }
 
-    /// Parse `["const" | ("static" "mut"?)] $ident ":" $ty (= $expr)?` with
-    /// `["const" | ("static" "mut"?)]` already parsed and stored in `m`.
+    /// Parse a static or const item with the prefix `"const" | "static" "mut"?` already parsed and stored in `m`.
     ///
-    /// When `m` is `"const"`, `$ident` may also be `"_"`.
+    /// ```ebnf
+    /// Static = "static" "mut"? $ident ":" $ty (= $expr)? ";" ;
+    /// Const = "const" ($ident | "_") Generics ":" $ty (= $expr)? WhereClause ";" ;
+    /// ```
+    // FIXME(generic_consts): Should we forbid underscore identifiers if we have generic parameters?
+    // FIXME(fmease): The control-flow is a bit too hairy, simplify it if possible.
     fn parse_item_global(
         &mut self,
         m: Option<Mutability>,
-    ) -> PResult<'a, (Ident, P<Ty>, Option<P<ast::Expr>>)> {
+    ) -> PResult<'a, (Ident, Generics, P<Ty>, Option<P<ast::Expr>>)> {
         let id = if m.is_none() { self.parse_ident_or_underscore() } else { self.parse_ident() }?;
+
+        let mut generics = if m.is_none() || self.may_recover() {
+            let generics = self.parse_generics()?;
+            // Check the span for emptiness instead of the list of parameters in order to correctly
+            // recognize and subsequently flag empty parameter lists (`<>`) as unstable.
+            if !generics.span.is_empty() {
+                if m.is_none() {
+                    self.sess.gated_spans.gate(sym::generic_consts, generics.span);
+                } else {
+                    self.sess.emit_err(errors::StaticWithGenerics { span: generics.span });
+                }
+            }
+            generics
+        } else {
+            Generics::default()
+        };
 
         // Parse the type of a `const` or `static mut?` item.
         // That is, the `":" $ty` fragment.
-        let ty = match (self.eat(&token::Colon), self.check(&token::Eq) | self.check(&token::Semi))
-        {
-            // If there wasn't a `:` or the colon was followed by a `=` or `;` recover a missing type.
+        // FIXME: This could maybe benefit from `.may_recover()`?
+        let ty = match (
+            self.eat(&token::Colon),
+            self.check(&token::Eq) | self.check(&token::Semi) | self.check_keyword(kw::Where),
+        ) {
+            // If there wasn't a `:` or the colon was followed by a `=`, `;` or `where`, recover a missing type.
             (true, false) => self.parse_ty()?,
             (colon, _) => self.recover_missing_const_type(colon, m),
         };
 
+        let before_where_clause =
+            if self.may_recover() { self.parse_where_clause()? } else { WhereClause::default() };
+
         let expr = if self.eat(&token::Eq) { Some(self.parse_expr()?) } else { None };
+
+        let after_where_clause = if m.is_none() || self.may_recover() {
+            self.parse_where_clause()?
+        } else {
+            WhereClause::default()
+        };
+
+        if before_where_clause.has_where_token && m.is_none() && let Some(expr) = &expr {
+            self.sess.emit_err(errors::WhereClauseBeforeConstBody {
+                span: before_where_clause.span,
+                name: id.span,
+                body: expr.span,
+                sugg: if !after_where_clause.has_where_token {
+                    self.sess.source_map().span_to_snippet(expr.span).ok().map(|body| {
+                        errors::WhereClauseBeforeConstBodySugg {
+                            left: before_where_clause.span.shrink_to_lo(),
+                            snippet: body,
+                            right: before_where_clause.span.shrink_to_hi().to(expr.span),
+                        }
+                    })
+                } else {
+                    // FIXME(generic_consts): Provide a structured suggestion to merge the first
+                    // where-clause into the second one.
+                    None
+                },
+            });
+        }
+
+        let mut predicates = before_where_clause.predicates;
+        predicates.extend(after_where_clause.predicates);
+        let where_clause = WhereClause {
+            has_where_token: before_where_clause.has_where_token
+                || after_where_clause.has_where_token,
+            predicates,
+            span: if after_where_clause.has_where_token {
+                after_where_clause.span
+            } else {
+                before_where_clause.span
+            },
+        };
+        if where_clause.has_where_token {
+            if m.is_none() {
+                self.sess.gated_spans.gate(sym::generic_consts, where_clause.span);
+            } else {
+                self.sess.emit_err(errors::StaticWithWhereClause { span: where_clause.span });
+            }
+        }
+        generics.where_clause = where_clause;
+
         self.expect_semi()?;
-        Ok((id, ty, expr))
+        Ok((id, generics, ty, expr))
     }
 
     /// We were supposed to parse `":" $ty` but the `:` or the type was missing.
