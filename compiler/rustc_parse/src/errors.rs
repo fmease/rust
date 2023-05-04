@@ -2692,3 +2692,17 @@ pub(crate) struct ExpectedBuiltinIdent {
     #[primary_span]
     pub span: Span,
 }
+
+#[derive(Diagnostic)]
+#[diag(parse_static_with_generics)]
+pub(crate) struct StaticWithGenerics {
+    #[primary_span]
+    pub span: Span,
+}
+
+#[derive(Diagnostic)]
+#[diag(parse_where_clause_before_const_expr)]
+pub(crate) struct WhereClauseBeforeConstExpr {
+    #[primary_span]
+    pub span: Span,
+}

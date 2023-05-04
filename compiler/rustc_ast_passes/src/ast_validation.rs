@@ -1286,6 +1286,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
 
         if ctxt == AssocCtxt::Impl {
             match &item.kind {
+                // FIXME(fmease): Do we need the analog of `check_gat_where` here? I don't think so.
                 AssocItemKind::Const(box ConstItem { expr: None, .. }) => {
                     self.session.emit_err(errors::AssocConstWithoutBody {
                         span: item.span,
@@ -1338,6 +1339,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             self.check_item_named(item.ident, "const");
         }
 
+        // FIXME(fmease): Do we need to visit the generics of consts here, too?
         match &item.kind {
             AssocItemKind::Type(box TyAlias { generics, bounds, ty, .. })
                 if ctxt == AssocCtxt::Trait =>
