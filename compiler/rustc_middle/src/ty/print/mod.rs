@@ -3,6 +3,7 @@ use crate::ty::{self, Ty, TyCtxt};
 
 use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sso::SsoHashSet;
+use rustc_hir::def::DefKind;
 use rustc_hir::def_id::{CrateNum, DefId, LocalDefId};
 use rustc_hir::definitions::{DefPathData, DisambiguatedDefPathData};
 
@@ -128,8 +129,19 @@ pub trait Printer<'tcx>: Sized {
                 self.print_impl_path(def_id, substs, self_ty, impl_trait_ref)
             }
 
-            _ => {
+            def_path_data => {
                 let parent_def_id = DefId { index: key.parent.unwrap(), ..def_id };
+
+                // Inherent projections
+                if let DefPathData::TypeNs(_) = def_path_data
+                    && let DefKind::Impl { of_trait: false } = self.tcx().def_kind(parent_def_id)
+                    && let Some(self_ty) = substs.get(0).and_then(|subst| subst.as_type())
+                {
+                    return self.path_generic_args(|cx| cx.path_append(
+                        |cx| cx.path_qualified(self_ty, None),
+                        &key.disambiguated_data,
+                    ), &substs[1..]);
+                }
 
                 let mut parent_substs = substs;
                 let mut trait_qualify_parent = false;
@@ -137,7 +149,7 @@ pub trait Printer<'tcx>: Sized {
                     let generics = self.tcx().generics_of(def_id);
                     parent_substs = &substs[..generics.parent_count.min(substs.len())];
 
-                    match key.disambiguated_data.data {
+                    match def_path_data {
                         // Closures' own generics are only captures, don't print them.
                         DefPathData::ClosureExpr => {}
                         // This covers both `DefKind::AnonConst` and `DefKind::InlineConst`.
