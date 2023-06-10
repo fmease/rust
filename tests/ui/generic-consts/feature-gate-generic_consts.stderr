@@ -1,0 +1,43 @@
+error[E0658]: generic consts are experimental
+  --> $DIR/feature-gate-generic_consts.rs:4:12
+   |
+LL |     const K<T>: i32;
+   |            ^^^
+   |
+   = help: add `#![feature(generic_consts)]` to the crate attributes to enable
+
+error[E0658]: generic consts are experimental
+  --> $DIR/feature-gate-generic_consts.rs:8:8
+   |
+LL | const K<T>: i32 = 0;
+   |        ^^^
+   |
+   = help: add `#![feature(generic_consts)]` to the crate attributes to enable
+
+error[E0658]: generic consts are experimental
+  --> $DIR/feature-gate-generic_consts.rs:11:8
+   |
+LL | const E<>: i32 = 0;
+   |        ^^
+   |
+   = help: add `#![feature(generic_consts)]` to the crate attributes to enable
+
+error[E0658]: generic consts are experimental
+  --> $DIR/feature-gate-generic_consts.rs:18:22
+   |
+LL | discard! { const FREE<T>: () = (); }
+   |                      ^^^
+   |
+   = help: add `#![feature(generic_consts)]` to the crate attributes to enable
+
+error[E0658]: generic consts are experimental
+  --> $DIR/feature-gate-generic_consts.rs:21:33
+   |
+LL | discard! { impl () { const ASSOC<const N: ()>: () = (); } }
+   |                                 ^^^^^^^^^^^^^
+   |
+   = help: add `#![feature(generic_consts)]` to the crate attributes to enable
+
+error: aborting due to 5 previous errors
+
+For more information about this error, try `rustc --explain E0658`.
