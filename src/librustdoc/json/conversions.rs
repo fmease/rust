@@ -321,8 +321,12 @@ fn from_clean_item(item: clean::Item, tcx: TyCtxt<'_>) -> ItemEnum {
                 impls: Vec::new(), // Added in JsonRenderer::item
             })
         }
-        TyAssocConstItem(ty) => ItemEnum::AssocConst { type_: ty.into_tcx(tcx), default: None },
-        AssocConstItem(ty, default) => {
+        // FIXME(generic_consts): Add support.
+        TyAssocConstItem(_generics, ty) => {
+            ItemEnum::AssocConst { type_: ty.into_tcx(tcx), default: None }
+        }
+        // FIXME(generic_consts): Add support.
+        AssocConstItem(_generics, ty, default) => {
             ItemEnum::AssocConst { type_: ty.into_tcx(tcx), default: Some(default.expr(tcx)) }
         }
         TyAssocTypeItem(g, b) => ItemEnum::AssocType {
