@@ -153,6 +153,7 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
             }
             ItemKind::Fn(.., generics, _)
             | ItemKind::TyAlias(_, generics)
+            | ItemKind::Const(_, generics, _)
             | ItemKind::Enum(_, generics)
             | ItemKind::Struct(_, generics)
             | ItemKind::Union(_, generics) => generics,
@@ -757,6 +758,7 @@ pub(super) fn type_param_predicates(
                 ItemKind::Fn(.., generics, _)
                 | ItemKind::Impl(&hir::Impl { generics, .. })
                 | ItemKind::TyAlias(_, generics)
+                | ItemKind::Const(_, generics, _)
                 | ItemKind::OpaqueTy(&OpaqueTy {
                     generics,
                     origin: hir::OpaqueTyOrigin::TyAlias { .. },
