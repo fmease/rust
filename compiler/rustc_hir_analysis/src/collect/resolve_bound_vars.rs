@@ -520,10 +520,32 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                 // These sorts of items have no lifetime parameters at all.
                 intravisit::walk_item(self, item);
             }
-            hir::ItemKind::Static(..) | hir::ItemKind::Const(..) => {
+            hir::ItemKind::Static(..) => {
                 // No lifetime parameters, but implied 'static.
                 self.with(Scope::Elision { s: self.scope }, |this| {
                     intravisit::walk_item(this, item)
+                });
+            }
+            // FIXME(fmease): Is there are way to merge this branch with the one below that
+            //                contains the `TyAlias`?
+            hir::ItemKind::Const(_, generics, _) => {
+                self.with(Scope::Elision { s: self.scope }, |this| {
+                    // These kinds of items have only early-bound lifetime parameters.
+                    let bound_vars = generics.params.iter().map(ResolvedArg::early).collect();
+                    this.record_late_bound_vars(item.hir_id(), vec![]);
+                    let scope = Scope::Binder {
+                        hir_id: item.hir_id(),
+                        bound_vars,
+                        scope_type: BinderScopeType::Normal,
+                        s: this.scope,
+                        where_bound_origin: None,
+                    };
+                    this.with(scope, |this| {
+                        let scope = Scope::TraitRefBoundary { s: this.scope };
+                        this.with(scope, |this| {
+                            intravisit::walk_item(this, item);
+                        });
+                    });
                 });
             }
             hir::ItemKind::OpaqueTy(hir::OpaqueTy {
@@ -819,10 +841,22 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                     })
                 });
             }
+            // FIXME(fmease): Somehow dedup w/ the branch above?
             Const(_, _) => {
-                // Only methods and types support generics.
-                assert!(trait_item.generics.params.is_empty());
-                intravisit::walk_trait_item(self, trait_item);
+                let bound_vars =
+                    (&trait_item.generics).params.iter().map(ResolvedArg::early).collect();
+                self.record_late_bound_vars(trait_item.hir_id(), vec![]);
+                let scope = Scope::Binder {
+                    hir_id: trait_item.hir_id(),
+                    bound_vars,
+                    s: self.scope,
+                    scope_type: BinderScopeType::Normal,
+                    where_bound_origin: None,
+                };
+                self.with(scope, |this| {
+                    let scope = Scope::TraitRefBoundary { s: this.scope };
+                    this.with(scope, |this| intravisit::walk_trait_item(this, trait_item))
+                });
             }
         }
     }
@@ -854,10 +888,22 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                     })
                 });
             }
+            // FIXME(fmease): Somehow dedup w/ the branch above?
             Const(_, _) => {
-                // Only methods and types support generics.
-                assert!(impl_item.generics.params.is_empty());
-                intravisit::walk_impl_item(self, impl_item);
+                let bound_vars: FxIndexMap<LocalDefId, ResolvedArg> =
+                    (&impl_item.generics).params.iter().map(ResolvedArg::early).collect();
+                self.record_late_bound_vars(impl_item.hir_id(), vec![]);
+                let scope = Scope::Binder {
+                    hir_id: impl_item.hir_id(),
+                    bound_vars,
+                    s: self.scope,
+                    scope_type: BinderScopeType::Normal,
+                    where_bound_origin: None,
+                };
+                self.with(scope, |this| {
+                    let scope = Scope::TraitRefBoundary { s: this.scope };
+                    this.with(scope, |this| intravisit::walk_impl_item(this, impl_item))
+                });
             }
         }
     }

@@ -256,6 +256,7 @@ fn reject_placeholder_type_signatures_in_item<'tcx>(
         hir::ItemKind::OpaqueTy(hir::OpaqueTy { generics, .. })
         | hir::ItemKind::TyAlias(_, generics) => (generics, false),
         // `static`, `fn` and `const` are handled elsewhere to suggest appropriate type.
+        // FIXME(fmease): ^ does "elsewhere" handle `generic_consts` properly?
         _ => return,
     };
 

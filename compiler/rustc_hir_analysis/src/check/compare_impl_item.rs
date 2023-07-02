@@ -76,7 +76,7 @@ fn check_method_is_structurally_compatible<'tcx>(
     Ok(())
 }
 
-/// This function is best explained by example. Consider a trait with it's implementation:
+/// This function is best explained by example. Consider a trait with its implementation:
 ///
 /// ```rust
 /// trait Trait<'t, T> {
@@ -120,7 +120,7 @@ fn check_method_is_structurally_compatible<'tcx>(
 /// types:
 ///
 /// ```rust,ignore (pseudo-Rust)
-/// <'b> fn(t: &'i0 U0, m: &'b) -> Foo
+/// <'b> fn(t: &'i0 U0, m: &'b N0) -> Foo
 /// ```
 ///
 /// We now want to extract and substitute the type of the *trait*
@@ -137,7 +137,7 @@ fn check_method_is_structurally_compatible<'tcx>(
 /// Applying this to the trait method type yields:
 ///
 /// ```rust,ignore (pseudo-Rust)
-/// <'a> fn(t: &'i0 U0, m: &'a) -> Foo
+/// <'a> fn(t: &'i0 U0, m: &'a N0) -> Foo
 /// ```
 ///
 /// This type is also the same but the name of the bound region (`'a`
@@ -262,8 +262,6 @@ fn compare_method_predicate_entailment<'tcx>(
     // type.
 
     // Compute placeholder form of impl and trait method tys.
-    let tcx = infcx.tcx;
-
     let mut wf_tys = FxIndexSet::default();
 
     let unnormalized_impl_sig = infcx.instantiate_binder_with_fresh_vars(
@@ -1669,19 +1667,19 @@ fn compare_synthetic_generics<'tcx>(
 /// ```rust,ignore (pseudo-Rust)
 /// trait Foo {
 ///     fn foo<const N: u8>();
-///     type bar<const N: u8>;
+///     type Bar<const N: u8>;
 ///     fn baz<const N: u32>();
-///     type blah<T>;
+///     type Blah<T>;
 /// }
 ///
 /// impl Foo for () {
 ///     fn foo<const N: u64>() {}
 ///     //~^ error
-///     type bar<const N: u64> {}
+///     type Bar<const N: u64> = ();
 ///     //~^ error
 ///     fn baz<T>() {}
 ///     //~^ error
-///     type blah<const N: i64> = u32;
+///     type Blah<const N: i64> = u32;
 ///     //~^ error
 /// }
 /// ```
@@ -1770,12 +1768,29 @@ pub(super) fn compare_impl_const_raw(
     let trait_const_item = tcx.associated_item(trait_const_item_def);
     let impl_trait_ref =
         tcx.impl_trait_ref(impl_const_item.container_id(tcx)).unwrap().subst_identity();
-    debug!("compare_const_impl(impl_trait_ref={:?})", impl_trait_ref);
 
-    let impl_c_span = tcx.def_span(impl_const_item_def.to_def_id());
+    debug!("compare_impl_const(impl_trait_ref={:?})", impl_trait_ref);
+
+    compare_number_of_generics(tcx, impl_const_item, trait_const_item, false)?;
+    compare_generic_param_kinds(tcx, impl_const_item, trait_const_item, false)?;
+    compare_const_predicate_entailment(tcx, impl_const_item, trait_const_item, impl_trait_ref)
+}
+
+/// The equivalent of [compare_method_predicate_entailment], but for associated constants
+/// instead of associated functions.
+// FIXME(fmease): Shouldn't we take special care of trait bounds and assume/require (dep on loc)
+// them to be const??? e.g. in `const K<T: Eq>` is the bound const? how can we enforce that?
+fn compare_const_predicate_entailment<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    impl_ct: ty::AssocItem,
+    trait_ct: ty::AssocItem,
+    impl_trait_ref: ty::TraitRef<'tcx>,
+) -> Result<(), ErrorGuaranteed> {
+    let impl_ct_def_id = impl_ct.def_id.expect_local();
+    let impl_ct_span = tcx.def_span(impl_ct_def_id);
 
     let infcx = tcx.infer_ctxt().build();
-    let param_env = tcx.param_env(impl_const_item_def.to_def_id());
+    let param_env = tcx.param_env(impl_ct.def_id);
     let ocx = ObligationCtxt::new(&infcx);
 
     // The below is for the most part highly similar to the procedure
@@ -1783,22 +1798,23 @@ pub(super) fn compare_impl_const_raw(
     // because we shouldn't really have to deal with lifetimes or
     // predicates. In fact some of this should probably be put into
     // shared functions because of DRY violations...
-    let trait_to_impl_substs = impl_trait_ref.substs;
+    // FIXME(fmease): ^^^ Now more than ever.
+    let impl_substs = InternalSubsts::identity_for_item(tcx, impl_ct.def_id);
+    let trait_to_impl_substs =
+        impl_substs.rebase_onto(tcx, impl_ct.container_id(tcx), impl_trait_ref.substs);
 
     // Create a parameter environment that represents the implementation's
     // method.
     // Compute placeholder form of impl and trait const tys.
-    let impl_ty = tcx.type_of(impl_const_item_def.to_def_id()).subst_identity();
-    let trait_ty = tcx.type_of(trait_const_item_def).subst(tcx, trait_to_impl_substs);
-    let mut cause = ObligationCause::new(
-        impl_c_span,
-        impl_const_item_def,
-        ObligationCauseCode::CompareImplItemObligation {
-            impl_item_def_id: impl_const_item_def,
-            trait_item_def_id: trait_const_item_def,
-            kind: impl_const_item.kind,
-        },
-    );
+    let impl_ty = tcx.type_of(impl_ct_def_id).subst_identity();
+
+    let trait_ty = tcx.type_of(trait_ct.def_id).subst(tcx, trait_to_impl_substs);
+    let code = ObligationCauseCode::CompareImplItemObligation {
+        impl_item_def_id: impl_ct_def_id,
+        trait_item_def_id: trait_ct.def_id,
+        kind: impl_ct.kind,
+    };
+    let mut cause = ObligationCause::new(impl_ct_span, impl_ct_def_id, code.clone());
 
     // There is no "body" here, so just pass dummy id.
     let impl_ty = ocx.normalize(&cause, param_env, impl_ty);
@@ -1818,7 +1834,7 @@ pub(super) fn compare_impl_const_raw(
         );
 
         // Locate the Span containing just the type of the offending impl
-        let (ty, _) = tcx.hir().expect_impl_item(impl_const_item_def).expect_const();
+        let (ty, _) = tcx.hir().expect_impl_item(impl_ct_def_id).expect_const();
         cause.span = ty.span;
 
         let mut diag = struct_span_err!(
@@ -1826,12 +1842,12 @@ pub(super) fn compare_impl_const_raw(
             cause.span,
             E0326,
             "implemented const `{}` has an incompatible type for trait",
-            trait_const_item.name
+            trait_ct.name
         );
 
-        let trait_c_span = trait_const_item_def.as_local().map(|trait_c_def_id| {
+        let trait_c_span = trait_ct.def_id.as_local().map(|trait_ct_def_id| {
             // Add a label to the Span containing just the type of the const
-            let (ty, _) = tcx.hir().expect_trait_item(trait_c_def_id).expect_const();
+            let (ty, _) = tcx.hir().expect_trait_item(trait_ct_def_id).expect_const();
             ty.span
         });
 
@@ -1847,8 +1863,62 @@ pub(super) fn compare_impl_const_raw(
             false,
             false,
         );
+        // FIXME(fmease): #prePR Check if we also ret early in method pred entail in this situation
+        //                meaning not emitting unsat obligs. Likely tho I presume.
         return Err(diag.emit());
     };
+
+    let impl_ct_predicates = tcx.predicates_of(impl_ct.def_id);
+    let trait_ct_predicates = tcx.predicates_of(trait_ct.def_id);
+
+    // FIXME(fmease): #prePR Is this correct here where we already have an ocx?
+    // FIXME(fmease): #prePR What exactly is this fn doing? Why doesn't it suffice to check the
+    //                preds as obtained above? Edit: Prob cuz this is for ck'ing not cmp'ing
+    if std::env::var("NO_CT_REG_BOUNDS").is_err() {
+        // FIXME(fmease): #prePR Should we really return early here on failure?
+        check_region_bounds_on_impl_item(tcx, impl_ct, trait_ct, false)?;
+    }
+
+    let impl_ct_own_bounds = impl_ct_predicates.instantiate_own(tcx, impl_substs);
+    // FIXME(fmease): #prePR It'd be nice to add this fast-path but it's likely unsound rn
+    // as the ocx may already contain some obligations from above that we don't want
+    // to just skip!!
+    // if impl_ct_own_bounds.len() == 0 {
+    //     return Ok(());
+    // }
+
+    // The predicates declared by the impl definition, the trait and the
+    // associated const in the trait are assumed.
+    let impl_predicates = tcx.predicates_of(impl_ct_predicates.parent.unwrap());
+    let mut hybrid_preds = impl_predicates.instantiate_identity(tcx);
+    hybrid_preds.predicates.extend(
+        trait_ct_predicates
+            .instantiate_own(tcx, trait_to_impl_substs)
+            .map(|(predicate, _)| predicate),
+    );
+
+    // FIXME(fmease): #prePR #style Get rid of the block smh.
+    {
+        let param_env = ty::ParamEnv::new(
+            tcx.mk_clauses(&hybrid_preds.predicates),
+            Reveal::UserFacing,
+            hir::Constness::Const,
+        );
+        let param_env = traits::normalize_param_env_or_error(
+            tcx,
+            param_env,
+            ObligationCause::misc(impl_ct_span, impl_ct_def_id),
+        );
+
+        // FIXME(fmease): #prePR Is this correct here where we already have an ocx?
+        for (predicate, span) in impl_ct_own_bounds {
+            let cause = ObligationCause::misc(span, impl_ct_def_id);
+            let predicate = ocx.normalize(&cause, param_env, predicate);
+
+            let cause = ObligationCause::new(span, impl_ct_def_id, code.clone());
+            ocx.register_obligation(traits::Obligation::new(tcx, cause, param_env, predicate));
+        }
+    }
 
     // Check that all obligations are satisfied by the implementation's
     // version.
@@ -1858,7 +1928,7 @@ pub(super) fn compare_impl_const_raw(
     }
 
     let outlives_env = OutlivesEnvironment::new(param_env);
-    ocx.resolve_regions_and_report_errors(impl_const_item_def, &outlives_env)
+    ocx.resolve_regions_and_report_errors(impl_ct_def_id, &outlives_env)
 }
 
 pub(super) fn compare_impl_ty<'tcx>(
@@ -1900,7 +1970,7 @@ fn compare_type_predicate_entailment<'tcx>(
         return Ok(());
     }
 
-    // This `HirId` should be used for the `body_id` field on each
+    // This `DefId` should be used for the `body_id` field on each
     // `ObligationCause` (and the `FnCtxt`). This is what
     // `regionck_item` expects.
     let impl_ty_def_id = impl_ty.def_id.expect_local();
@@ -1919,7 +1989,7 @@ fn compare_type_predicate_entailment<'tcx>(
     debug!("compare_type_predicate_entailment: bounds={:?}", hybrid_preds);
 
     let impl_ty_span = tcx.def_span(impl_ty_def_id);
-    let normalize_cause = traits::ObligationCause::misc(impl_ty_span, impl_ty_def_id);
+    let normalize_cause = ObligationCause::misc(impl_ty_span, impl_ty_def_id);
     let param_env = ty::ParamEnv::new(
         tcx.mk_clauses(&hybrid_preds.predicates),
         Reveal::UserFacing,
@@ -1968,7 +2038,7 @@ fn compare_type_predicate_entailment<'tcx>(
 ///
 /// trait X { type Y: Copy } impl X for T { type Y = S; }
 ///
-/// We are able to normalize `<T as X>::U` to `S`, and so when we check the
+/// We are able to normalize `<T as X>::Y` to `S`, and so when we check the
 /// impl is well-formed we have to prove `S: Copy`.
 ///
 /// For default associated types the normalization is not possible (the value

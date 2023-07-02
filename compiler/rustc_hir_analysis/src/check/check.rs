@@ -519,6 +519,8 @@ fn check_item_type(tcx: TyCtxt<'_>, id: hir::ItemId) {
             check_static_linkage(tcx, id.owner_id.def_id);
         }
         DefKind::Const => {
+            // FIXME(fmease): #prePR Do we need to do the following here?
+            // let _ = tcx.generics_of(id.owner_id);
             tcx.ensure().typeck(id.owner_id.def_id);
         }
         DefKind::Enum => {
