@@ -518,6 +518,9 @@ fn check_item_type(tcx: TyCtxt<'_>, id: hir::ItemId) {
             check_static_inhabited(tcx, id.owner_id.def_id);
             check_static_linkage(tcx, id.owner_id.def_id);
         }
+        // FIXME(generic_consts): Do we want to enforce that type params are used? I don't think so.
+        // Can unused params lead to unsoundness or unwanted behavior though?
+        // FIXME(generic_consts): Do we correctly compute the variances of type params?
         DefKind::Const => {
             tcx.ensure().typeck(id.owner_id.def_id);
         }

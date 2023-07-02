@@ -300,6 +300,7 @@ fn check_trait_item(tcx: TyCtxt<'_>, trait_item: &hir::TraitItem<'_>) {
 ///     fn into_iter<'a>(&'a self) -> Self::Iter<'a>;
 /// }
 /// ```
+// FIXME(generic_consts): This is not relevant to generic consts at all, right?
 fn check_gat_where_clauses(tcx: TyCtxt<'_>, associated_items: &[hir::TraitItemRef]) {
     // Associates every GAT's def_id to a list of possibly missing bounds detected by this lint.
     let mut required_bounds_by_item = FxHashMap::default();
