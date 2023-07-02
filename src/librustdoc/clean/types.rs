@@ -830,9 +830,9 @@ pub(crate) enum ItemKind {
     ProcMacroItem(ProcMacro),
     PrimitiveItem(PrimitiveType),
     /// A required associated constant in a trait declaration.
-    TyAssocConstItem(Type),
+    TyAssocConstItem(Generics, Type),
     /// An associated constant in a trait impl or a provided one in a trait declaration.
-    AssocConstItem(Type, ConstantKind),
+    AssocConstItem(Generics, Type, ConstantKind),
     /// A required associated type in a trait declaration.
     ///
     /// The bounds may be non-empty if there is a `where` clause.
@@ -877,8 +877,8 @@ impl ItemKind {
             | MacroItem(_)
             | ProcMacroItem(_)
             | PrimitiveItem(_)
-            | TyAssocConstItem(_)
-            | AssocConstItem(_, _)
+            | TyAssocConstItem(..)
+            | AssocConstItem(..)
             | TyAssocTypeItem(..)
             | AssocTypeItem(..)
             | StrippedItem(_)
@@ -1275,7 +1275,7 @@ impl Lifetime {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum WherePredicate {
     BoundPredicate { ty: Type, bounds: Vec<GenericBound>, bound_params: Vec<GenericParamDef> },
     RegionPredicate { lifetime: Lifetime, bounds: Vec<GenericBound> },
@@ -1345,7 +1345,7 @@ impl GenericParamDef {
 }
 
 // maybe use a Generic enum and use Vec<Generic>?
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, PartialEq, Eq, Hash, Debug, Default)]
 pub(crate) struct Generics {
     pub(crate) params: ThinVec<GenericParamDef>,
     pub(crate) where_predicates: ThinVec<WherePredicate>,
@@ -2250,9 +2250,13 @@ pub(crate) struct Static {
     pub(crate) expr: Option<BodyId>,
 }
 
+// FIXME(fmease): #prePR investigate why this type needs `PartialEq`, `Eq`, `Hash`.
+// If it actually doesn't (or we can easily get rid of it), remove the added derives
+// from `Generics` and `WherePredicate` again.
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct Constant {
     pub(crate) type_: Type,
+    pub(crate) generics: Generics,
     pub(crate) kind: ConstantKind,
 }
 
@@ -2502,7 +2506,8 @@ mod size_asserts {
     static_assert_size!(GenericParamDef, 56);
     static_assert_size!(Generics, 16);
     static_assert_size!(Item, 56);
-    static_assert_size!(ItemKind, 64);
+    // FIXME(fmease): #prePR reduce the size again, it used to be 64
+    static_assert_size!(ItemKind, 80);
     static_assert_size!(PathSegment, 40);
     static_assert_size!(Type, 32);
     // tidy-alphabetical-end

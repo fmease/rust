@@ -1541,12 +1541,19 @@ fn item_constant(w: &mut Buffer, cx: &mut Context<'_>, it: &clean::Item, c: &cle
         let tcx = cx.tcx();
         render_attributes_in_code(w, it, tcx);
 
+        // FIXME(fmease): #prePR This is actually not just confined to rustdoc.
+        // Apparently where-clause clauses go *before* the body for *free* ty aliases.
+        // Why? I thought the change affected both free and assoc?
+        // Investigate and update the parsing machinery, AST & HIR pretty-printing and
+        // rustdoc.
         write!(
             w,
-            "{vis}const {name}: {typ}",
+            "{vis}const {name}{generics}: {typ}{where_clause}",
             vis = visibility_print_with_space(it.visibility(tcx), it.item_id, cx),
             name = it.name.unwrap(),
+            generics = c.generics.print(cx),
             typ = c.type_.print(cx),
+            where_clause = print_where_clause(&c.generics, cx, 0, Ending::Newline),
         );
 
         // FIXME: The code below now prints
