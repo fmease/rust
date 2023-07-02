@@ -50,7 +50,11 @@ impl<'tcx> LateLintPass<'tcx> for LargeConstArrays {
     fn check_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx Item<'_>) {
         if_chain! {
             if !item.span.from_expansion();
-            if let ItemKind::Const(hir_ty, _) = &item.kind;
+            if let ItemKind::Const(hir_ty, generics, _) = &item.kind;
+            // Since static items may not have generics, skip generic consts.
+            // FIXME(fmease): This `generics.hwcp` doesn't account for items with a trailing
+            // `where` keyword but no bounds.
+            if generics.params.is_empty() && !generics.has_where_clause_predicates;
             let ty = hir_ty_to_ty(cx.tcx, hir_ty);
             if let ty::Array(element_type, cst) = ty.kind();
             if let ConstKind::Value(ty::ValTree::Leaf(element_count)) = cst.kind();

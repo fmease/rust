@@ -286,7 +286,10 @@ declare_lint_pass!(NonCopyConst => [DECLARE_INTERIOR_MUTABLE_CONST, BORROW_INTER
 
 impl<'tcx> LateLintPass<'tcx> for NonCopyConst {
     fn check_item(&mut self, cx: &LateContext<'tcx>, it: &'tcx Item<'_>) {
-        if let ItemKind::Const(hir_ty, body_id) = it.kind {
+        if let ItemKind::Const(hir_ty, _generics, body_id) = it.kind {
+            // FIXME(fmease): Not sure if we need to do some extra work here for generic consts.
+            // Do we need to explicitly replace params with placeholders or can `is_unfrozen` already
+            // handle "unbound" ty params etc. on its own?
             let ty = hir_ty_to_ty(cx.tcx, hir_ty);
             if !ignored_macro(cx, it) && is_unfrozen(cx, ty) && is_value_unfrozen_poly(cx, body_id, ty) {
                 lint(cx, Source::Item { item: it.span });

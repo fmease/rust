@@ -462,8 +462,9 @@ impl<'a, 'tcx> ConstEvalLateContext<'a, 'tcx> {
             Res::Def(DefKind::Const | DefKind::AssocConst, def_id) => {
                 // Check if this constant is based on `cfg!(..)`,
                 // which is NOT constant for our purposes.
+                // FIXME(fmease): Ignoring the generics here is certainly not right
                 if let Some(node) = self.lcx.tcx.hir().get_if_local(def_id)
-                    && let Node::Item(Item { kind: ItemKind::Const(_, body_id), .. }) = node
+                    && let Node::Item(Item { kind: ItemKind::Const(.., body_id), .. }) = node
                     && let Node::Expr(Expr { kind: ExprKind::Lit(_), span, .. }) = self.lcx
                         .tcx
                         .hir()

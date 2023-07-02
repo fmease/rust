@@ -349,7 +349,10 @@ impl<'tcx> LateLintPass<'tcx> for Types {
         let is_exported = cx.effective_visibilities.is_exported(item.owner_id.def_id);
 
         match item.kind {
-            ItemKind::Static(ty, _, _) | ItemKind::Const(ty, _) => self.check_ty(
+            // FIXME(fmease): Not sure if we need to do some extra work here for generic consts.
+            // Do we need to explicitly replace params with placeholders or can relate routines
+            // handle "unbound" ty params etc. on their own?
+            ItemKind::Static(ty, _, _) | ItemKind::Const(ty, _, _) => self.check_ty(
                 cx,
                 ty,
                 CheckTyContext {
