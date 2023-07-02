@@ -284,6 +284,8 @@ impl<'a, 'tcx> VarVisitor<'a, 'tcx> {
                         if index_used_directly {
                             self.indexed_directly.insert(
                                 seqvar.segments[0].ident.name,
+                                // FIXME(generic_consts): Do we need to subst anything here or has
+                                // that already been taken care of?
                                 (None, self.cx.typeck_results().node_type(seqexpr.hir_id)),
                             );
                         } else {

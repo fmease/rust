@@ -463,7 +463,7 @@ impl<'a, 'tcx> ConstEvalLateContext<'a, 'tcx> {
                 // Check if this constant is based on `cfg!(..)`,
                 // which is NOT constant for our purposes.
                 if let Some(node) = self.lcx.tcx.hir().get_if_local(def_id)
-                    && let Node::Item(Item { kind: ItemKind::Const(_, body_id), .. }) = node
+                    && let Node::Item(Item { kind: ItemKind::Const(.., body_id), .. }) = node
                     && let Node::Expr(Expr { kind: ExprKind::Lit(_), span, .. }) = self.lcx
                         .tcx
                         .hir()
@@ -473,6 +473,7 @@ impl<'a, 'tcx> ConstEvalLateContext<'a, 'tcx> {
                     return None;
                 }
 
+                // FIXME(generic_consts): Does this already account for generic consts?
                 let substs = self.typeck_results.node_substs(id);
                 let substs = if self.substs.is_empty() {
                     substs

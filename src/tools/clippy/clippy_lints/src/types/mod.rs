@@ -349,7 +349,9 @@ impl<'tcx> LateLintPass<'tcx> for Types {
         let is_exported = cx.effective_visibilities.is_exported(item.owner_id.def_id);
 
         match item.kind {
-            ItemKind::Static(ty, _, _) | ItemKind::Const(ty, _) => self.check_ty(
+            // FIXME(generic_consts): Not sure if we need to handle generics explicitly here like
+            // replacing params with placeholders or can relate routines handle params on their own?
+            ItemKind::Static(ty, _, _) | ItemKind::Const(ty, _, _) => self.check_ty(
                 cx,
                 ty,
                 CheckTyContext {
@@ -364,6 +366,8 @@ impl<'tcx> LateLintPass<'tcx> for Types {
 
     fn check_impl_item(&mut self, cx: &LateContext<'tcx>, item: &'tcx ImplItem<'_>) {
         match item.kind {
+            // FIXME(generic_consts): Not sure if we need to handle generics explicitly here like
+            // replacing params with placeholders or can relate routines handle params on their own?
             ImplItemKind::Const(ty, _) => {
                 let is_in_trait_impl = if let Some(hir::Node::Item(item)) = cx
                     .tcx
@@ -413,6 +417,8 @@ impl<'tcx> LateLintPass<'tcx> for Types {
         };
 
         match item.kind {
+            // FIXME(generic_consts): Not sure if we need to handle generics explicitly here like
+            // replacing params with placeholders or can relate routines handle params on their own?
             TraitItemKind::Const(ty, _) | TraitItemKind::Type(_, Some(ty)) => {
                 self.check_ty(cx, ty, context);
             },

@@ -34,6 +34,7 @@ impl<'tcx> LateLintPass<'tcx> for InvalidPaths {
         if_chain! {
             if mod_name.as_str() == "paths";
             if let hir::ItemKind::Const(ty, body_id) = item.kind;
+            // FIXME(generic_consts): Is this compatible with generic consts?
             let ty = hir_ty_to_ty(cx.tcx, ty);
             if let ty::Array(el_ty, _) = &ty.kind();
             if let ty::Ref(_, el_ty, _) = &el_ty.kind();

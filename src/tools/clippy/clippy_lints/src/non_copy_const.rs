@@ -286,7 +286,9 @@ declare_lint_pass!(NonCopyConst => [DECLARE_INTERIOR_MUTABLE_CONST, BORROW_INTER
 
 impl<'tcx> LateLintPass<'tcx> for NonCopyConst {
     fn check_item(&mut self, cx: &LateContext<'tcx>, it: &'tcx Item<'_>) {
-        if let ItemKind::Const(hir_ty, body_id) = it.kind {
+        if let ItemKind::Const(hir_ty, _generics, body_id) = it.kind {
+            // FIXME(generic_consts): Not sure if we need to handle generics explicitly here like
+            // replacing params with placeholders or can `is_unfrozen` handle params on its own?
             let ty = hir_ty_to_ty(cx.tcx, hir_ty);
             if !ignored_macro(cx, it) && is_unfrozen(cx, ty) && is_value_unfrozen_poly(cx, body_id, ty) {
                 lint(cx, Source::Item { item: it.span });
@@ -295,6 +297,7 @@ impl<'tcx> LateLintPass<'tcx> for NonCopyConst {
     }
 
     fn check_trait_item(&mut self, cx: &LateContext<'tcx>, trait_item: &'tcx TraitItem<'_>) {
+        // FIXME(generic_consts): Not sure if we need to handle generics explicitly here.
         if let TraitItemKind::Const(hir_ty, body_id_opt) = &trait_item.kind {
             let ty = hir_ty_to_ty(cx.tcx, hir_ty);
 
@@ -322,6 +325,7 @@ impl<'tcx> LateLintPass<'tcx> for NonCopyConst {
     }
 
     fn check_impl_item(&mut self, cx: &LateContext<'tcx>, impl_item: &'tcx ImplItem<'_>) {
+        // FIXME(generic_consts): Not sure if we need to handle generics explicitly here
         if let ImplItemKind::Const(hir_ty, body_id) = &impl_item.kind {
             let item_def_id = cx.tcx.hir().get_parent_item(impl_item.hir_id()).def_id;
             let item = cx.tcx.hir().expect_item(item_def_id);

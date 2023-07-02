@@ -77,6 +77,7 @@ impl<'tcx> LateLintPass<'tcx> for InterningDefinedSymbol {
             for def_id in def_path_def_ids(cx, module) {
                 for item in cx.tcx.module_children(def_id) {
                     if_chain! {
+                        // FIXME(generic_consts): Shouldn't we subst here now?
                         if let Res::Def(DefKind::Const, item_def_id) = item.res;
                         let ty = cx.tcx.type_of(item_def_id).subst_identity();
                         if match_type(cx, ty, &paths::SYMBOL);
