@@ -1,7 +1,13 @@
+#![feature(generic_consts)]
+#![allow(incomplete_features, dead_code)]
+
+// FIXME(generic_consts): Is this the expected behavior? #110590 #112319
+// check-pass
+
 trait Foo {
     const BAR: bool
-        where //~ ERROR: expected one of `!`, `(`, `+`, `::`, `;`, `<`, or `=`, found keyword `where`
-            Self: Sized;
+    where
+        Self: Sized;
 }
 
 fn foo(_: &dyn Foo) {}
