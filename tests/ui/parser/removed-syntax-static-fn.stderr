@@ -4,13 +4,13 @@ error: expected identifier, found keyword `fn`
 LL |     static fn f() {}
    |            ^^ expected identifier, found keyword
 
-error: expected one of `:`, `;`, or `=`, found `f`
+error: expected one of `:`, `;`, `<`, `=`, or `where`, found `f`
   --> $DIR/removed-syntax-static-fn.rs:4:15
    |
 LL | impl S {
    |        - while parsing this item list starting here
 LL |     static fn f() {}
-   |               ^ expected one of `:`, `;`, or `=`
+   |               ^ expected one of `:`, `;`, `<`, `=`, or `where`
 ...
 LL | }
    | - the item list ends here
