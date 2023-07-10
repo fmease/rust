@@ -1,0 +1,14 @@
+error[E0637]: `&` without an explicit lifetime name cannot be used here
+  --> $DIR/lifetime-elision.rs:9:5
+   |
+LL |     &T: Copy;
+   |     ^ explicit lifetime name needed here
+   |
+help: consider introducing a higher-ranked lifetime here
+   |
+LL |     for<'a> &'a T: Copy;
+   |     +++++++  ++
+
+error: aborting due to previous error
+
+For more information about this error, try `rustc --explain E0637`.
