@@ -1499,30 +1499,18 @@ pub(crate) fn clean_middle_assoc_item<'tcx>(
 fn first_non_private_clean_path<'tcx>(
     cx: &mut DocContext<'tcx>,
     path: &hir::Path<'tcx>,
-    mut new_path_segments: Vec<hir::PathSegment<'tcx>>,
+    new_path_segments: &'tcx mut [hir::PathSegment<'tcx>],
     new_path_span: rustc_span::Span,
 ) -> Path {
-    use std::mem::transmute;
-
     // In here we need to play with the path data one last time to provide it the
     // missing `args` and `res` of the final `Path` we get, which, since it comes
     // from a re-export, doesn't have the generics that were originally there, so
     // we add them by hand.
     if let Some(last) = new_path_segments.last_mut() {
-        // `transmute` is needed because we are using a wrong lifetime. Since
-        // `segments` will be dropped at the end of this block, it's fine.
-        last.args = unsafe { transmute(path.segments.last().as_ref().unwrap().args.clone()) };
+        last.args = path.segments.last().as_ref().unwrap().args.clone();
         last.res = path.res;
     }
-    // `transmute` is needed because we are using a wrong lifetime. Since
-    // `segments` will be dropped at the end of this block, it's fine.
-    let path = unsafe {
-        hir::Path {
-            segments: transmute(new_path_segments.as_slice()),
-            res: path.res,
-            span: new_path_span,
-        }
-    };
+    let path = hir::Path { segments: new_path_segments, res: path.res, span: new_path_span };
     clean_path(&path, cx)
 }
 
@@ -1541,8 +1529,9 @@ fn first_non_private<'tcx>(
         .updated_qpath
         .borrow()
         .get(&use_id)
-        .map(|saved_path| (saved_path.segments.to_vec(), saved_path.span));
+        .map(|saved_path| (saved_path.segments, saved_path.span));
     if let Some((segments, span)) = saved_path {
+        let segments = cx.tcx.arena.alloc_slice(segments);
         return Some(first_non_private_clean_path(cx, path, segments, span));
     }
     let (parent_def_id, ident) = match &path.segments[..] {
@@ -1611,8 +1600,8 @@ fn first_non_private<'tcx>(
                 // 2. We didn't find a public reexport so it's the "end type" path.
                 if let Some((new_path, _)) = last_path_res {
                     cx.updated_qpath.borrow_mut().insert(use_id, new_path.clone());
-                    let new_path_segments = new_path.segments.to_vec();
-                    return Some(first_non_private_clean_path(cx, path, new_path_segments, new_path.span));
+                    let segments = cx.tcx.arena.alloc_slice(new_path.segments);
+                    return Some(first_non_private_clean_path(cx, path, segments, new_path.span));
                 }
                 // If `last_path_res` is `None`, it can mean two things:
                 //
