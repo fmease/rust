@@ -72,6 +72,7 @@ pub(crate) fn where_clauses(cx: &DocContext<'_>, clauses: Vec<WP>) -> ThinVec<WP
     clauses
 }
 
+// @Note this basically does the same as clean_middle_opaque_bounds re bound clean
 pub(crate) fn merge_bounds(
     cx: &clean::DocContext<'_>,
     bounds: &mut Vec<clean::GenericBound>,
@@ -81,9 +82,8 @@ pub(crate) fn merge_bounds(
     rhs: &clean::Term,
 ) -> bool {
     !bounds.iter_mut().any(|b| {
-        let trait_ref = match *b {
-            clean::GenericBound::TraitBound(ref mut tr, _) => tr,
-            clean::GenericBound::Outlives(..) => return false,
+        let clean::GenericBound::TraitBound(trait_ref, _) = b else {
+            return false;
         };
         // If this QPath's trait `trait_did` is the same as, or a supertrait
         // of, the bound's trait `did` then we can keep going, otherwise
@@ -119,7 +119,12 @@ pub(crate) fn merge_bounds(
     })
 }
 
-fn trait_is_same_or_supertrait(cx: &DocContext<'_>, child: DefId, trait_: DefId) -> bool {
+// FIXME(fmease): @Task get rid of this!
+pub(crate) fn trait_is_same_or_supertrait(
+    cx: &DocContext<'_>,
+    child: DefId,
+    trait_: DefId,
+) -> bool {
     if child == trait_ {
         return true;
     }
@@ -137,6 +142,33 @@ fn trait_is_same_or_supertrait(cx: &DocContext<'_>, child: DefId, trait_: DefId)
             }
         })
         .any(|did| trait_is_same_or_supertrait(cx, did, trait_))
+}
+
+// @Task docs
+pub(crate) fn trait_is_same_or_supertrait2<'tcx>(
+    cx: &DocContext<'tcx>,
+    child: ty::TraitRef<'tcx>,
+    trait_: ty::TraitRef<'tcx>,
+) -> bool {
+    if child == trait_ {
+        return true;
+    }
+    let predicates = cx.tcx.super_predicates_of(child.def_id);
+    debug_assert!(cx.tcx.generics_of(child.def_id).has_self);
+    predicates
+        .predicates
+        .iter()
+        .filter_map(|(pred, _)| {
+            let ty::ClauseKind::Trait(pred) = pred.kind().skip_binder() else {
+                return None;
+            };
+            if pred.trait_ref.self_ty() != cx.tcx.types.self_param {
+                return None;
+            }
+
+            Some(ty::EarlyBinder::bind(pred.trait_ref).instantiate(cx.tcx, child.args))
+        })
+        .any(|child| trait_is_same_or_supertrait2(cx, child, trait_))
 }
 
 /// Move bounds that are (likely) directly attached to generic parameters from the where-clause to
