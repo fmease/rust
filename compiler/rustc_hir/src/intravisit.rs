@@ -904,11 +904,13 @@ pub fn walk_where_predicate<'v, V: Visitor<'v>>(
             bound_generic_params,
             origin: _,
             span: _,
+            binder_predicates,
         }) => {
             visitor.visit_id(hir_id);
             visitor.visit_ty(bounded_ty);
             walk_list!(visitor, visit_param_bound, bounds);
             walk_list!(visitor, visit_generic_param, bound_generic_params);
+            walk_list!(visitor, visit_where_predicate, binder_predicates);
         }
         WherePredicate::RegionPredicate(WhereRegionPredicate {
             ref lifetime,

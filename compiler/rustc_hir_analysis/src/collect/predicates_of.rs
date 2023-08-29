@@ -214,101 +214,11 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
         predicates.insert((trait_ref.to_predicate(tcx), tcx.def_span(def_id)));
     }
 
-    // Collect the predicates that were written inline by the user on each
-    // type parameter (e.g., `<T: Foo>`). Also add `ConstArgHasType` predicates
-    // for each const parameter.
-    for param in ast_generics.params {
-        match param.kind {
-            // We already dealt with early bound lifetimes above.
-            GenericParamKind::Lifetime { .. } => (),
-            GenericParamKind::Type { .. } => {
-                let param_ty = icx.astconv().hir_id_to_bound_ty(param.hir_id);
-                let mut bounds = Bounds::default();
-                // Params are implicitly sized unless a `?Sized` bound is found
-                icx.astconv().add_implicitly_sized(
-                    &mut bounds,
-                    param_ty,
-                    &[],
-                    Some((param.def_id, ast_generics.predicates)),
-                    param.span,
-                );
-                trace!(?bounds);
-                predicates.extend(bounds.clauses());
-                trace!(?predicates);
-            }
-            hir::GenericParamKind::Const { .. } => {
-                let ct_ty = tcx
-                    .type_of(param.def_id.to_def_id())
-                    .no_bound_vars()
-                    .expect("const parameters cannot be generic");
-                let ct = icx.astconv().hir_id_to_bound_const(param.hir_id, ct_ty);
-                predicates.insert((
-                    ty::ClauseKind::ConstArgHasType(ct, ct_ty).to_predicate(tcx),
-                    param.span,
-                ));
-            }
-        }
-    }
-
-    trace!(?predicates);
-    // Add in the bounds that appear in the where-clause.
-    for predicate in ast_generics.predicates {
-        match predicate {
-            hir::WherePredicate::BoundPredicate(bound_pred) => {
-                let ty = icx.to_ty(bound_pred.bounded_ty);
-                let bound_vars = tcx.late_bound_vars(bound_pred.hir_id);
-                // Keep the type around in a dummy predicate, in case of no bounds.
-                // That way, `where Ty:` is not a complete noop (see #53696) and `Ty`
-                // is still checked for WF.
-                if bound_pred.bounds.is_empty() {
-                    if let ty::Param(_) = ty.kind() {
-                        // This is a `where T:`, which can be in the HIR from the
-                        // transformation that moves `?Sized` to `T`'s declaration.
-                        // We can skip the predicate because type parameters are
-                        // trivially WF, but also we *should*, to avoid exposing
-                        // users who never wrote `where Type:,` themselves, to
-                        // compiler/tooling bugs from not handling WF predicates.
-                    } else {
-                        let span = bound_pred.bounded_ty.span;
-                        let predicate = ty::Binder::bind_with_vars(
-                            ty::ClauseKind::WellFormed(ty.into()),
-                            bound_vars,
-                        );
-                        predicates.insert((predicate.to_predicate(tcx), span));
-                    }
-                }
-
-                let mut bounds = Bounds::default();
-                icx.astconv().add_bounds(
-                    ty,
-                    bound_pred.bounds.iter(),
-                    &mut bounds,
-                    bound_vars,
-                    OnlySelfBounds(false),
-                );
-                predicates.extend(bounds.clauses());
-            }
-
-            hir::WherePredicate::RegionPredicate(region_pred) => {
-                let r1 = icx.astconv().ast_region_to_region(&region_pred.lifetime, None);
-                predicates.extend(region_pred.bounds.iter().map(|bound| {
-                    let (r2, span) = match bound {
-                        hir::GenericBound::Outlives(lt) => {
-                            (icx.astconv().ast_region_to_region(lt, None), lt.ident.span)
-                        }
-                        _ => bug!(),
-                    };
-                    let pred = ty::ClauseKind::RegionOutlives(ty::OutlivesPredicate(r1, r2))
-                        .to_predicate(tcx);
-                    (pred, span)
-                }))
-            }
-
-            hir::WherePredicate::EqPredicate(..) => {
-                // FIXME(#20041)
-            }
-        }
-    }
+    icx.astconv().lower_where_predicates(
+        &ast_generics.params,
+        &ast_generics.predicates,
+        &mut predicates,
+    );
 
     if tcx.features().generic_const_exprs {
         predicates.extend(const_evaluatable_predicates_of(tcx, def_id));
@@ -823,6 +733,8 @@ impl<'tcx> ItemCtxt<'tcx> {
                 }),
                 &mut bounds,
                 bound_vars,
+                // TODO: convert `where_bound_predicate` above accordingly
+                ty::List::empty(),
                 only_self_bounds,
             );
         }

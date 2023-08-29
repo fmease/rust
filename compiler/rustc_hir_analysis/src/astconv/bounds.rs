@@ -1,10 +1,10 @@
-use rustc_data_structures::fx::FxHashMap;
+use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
 use rustc_errors::struct_span_err;
 use rustc_hir as hir;
 use rustc_hir::def::{DefKind, Res};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_lint_defs::Applicability;
-use rustc_middle::ty::{self as ty, Ty, TypeVisitableExt};
+use rustc_middle::ty::{self as ty, ToPredicate, Ty, TypeVisitableExt};
 use rustc_span::symbol::Ident;
 use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::traits;
@@ -16,6 +16,132 @@ use crate::bounds::Bounds;
 use crate::errors;
 
 impl<'tcx> dyn AstConv<'tcx> + '_ {
+    pub(crate) fn lower_where_predicates(
+        &self,
+        params: &'tcx [hir::GenericParam<'tcx>],
+        hir_predicates: &'tcx [hir::WherePredicate<'tcx>],
+        predicates: &mut FxIndexSet<(ty::Clause<'tcx>, Span)>,
+    ) {
+        // Collect the predicates that were written inline by the user on each
+        // type parameter (e.g., `<T: Foo>`). Also add `ConstArgHasType` predicates
+        // for each const parameter.
+        for param in params {
+            match param.kind {
+                hir::GenericParamKind::Lifetime { .. } => (),
+                hir::GenericParamKind::Type { .. } => {
+                    let param_ty =
+                        ty::fold::shift_vars(self.tcx(), self.hir_id_to_bound_ty(param.hir_id), 1);
+                    let mut bounds = Bounds::default();
+                    // Params are implicitly sized unless a `?Sized` bound is found
+                    self.add_implicitly_sized(
+                        &mut bounds,
+                        param_ty,
+                        &[],
+                        Some((param.def_id, hir_predicates)),
+                        param.span,
+                    );
+                    trace!(?bounds);
+                    predicates.extend(bounds.clauses());
+                    trace!(?predicates);
+                }
+                hir::GenericParamKind::Const { .. } => {
+                    let ct_ty = self
+                        .tcx()
+                        .type_of(param.def_id.to_def_id())
+                        .no_bound_vars()
+                        .expect("const parameters cannot be generic");
+                    let ct = ty::fold::shift_vars(
+                        self.tcx(),
+                        self.hir_id_to_bound_const(param.hir_id, ct_ty),
+                        1,
+                    );
+                    predicates.insert((
+                        ty::Binder::bind_with_vars(
+                            ty::ClauseKind::ConstArgHasType(ct, ct_ty),
+                            ty::List::empty(),
+                        )
+                        .to_predicate(self.tcx()),
+                        param.span,
+                    ));
+                }
+            }
+        }
+
+        // Add in the bounds that appear in the where-clause.
+        for predicate in hir_predicates {
+            match predicate {
+                hir::WherePredicate::BoundPredicate(bound_pred) => {
+                    let ty = self.ast_ty_to_ty(bound_pred.bounded_ty);
+                    let bound_vars = self.tcx().late_bound_vars(bound_pred.hir_id);
+
+                    let mut binder_predicates = FxIndexSet::default();
+                    self.lower_where_predicates(
+                        bound_pred.bound_generic_params,
+                        bound_pred.binder_predicates,
+                        &mut binder_predicates,
+                    );
+                    let binder_predicates = self.tcx().mk_clauses_from_iter(
+                        binder_predicates.into_iter().map(|(clause, _)| clause),
+                    );
+                    if !binder_predicates.is_empty() {
+                        println!("binder_predicates = {binder_predicates:#?}");
+                    }
+
+                    // Keep the type around in a dummy predicate, in case of no bounds.
+                    // That way, `where Ty:` is not a complete noop (see #53696) and `Ty`
+                    // is still checked for WF.
+                    if bound_pred.bounds.is_empty() {
+                        if let ty::Param(_) = ty.kind() {
+                            // This is a `where T:`, which can be in the HIR from the
+                            // transformation that moves `?Sized` to `T`'s declaration.
+                            // We can skip the predicate because type parameters are
+                            // trivially WF, but also we *should*, to avoid exposing
+                            // users who never wrote `where Type:,` themselves, to
+                            // compiler/tooling bugs from not handling WF predicates.
+                        } else {
+                            let span = bound_pred.bounded_ty.span;
+                            let predicate = ty::Binder::bind_with_vars(
+                                ty::ClauseKind::WellFormed(ty.into()),
+                                bound_vars,
+                            );
+                            predicates.insert((predicate.to_predicate(self.tcx()), span));
+                        }
+                    }
+
+                    let mut bounds = Bounds::default();
+                    self.add_bounds(
+                        ty,
+                        bound_pred.bounds.iter(),
+                        &mut bounds,
+                        bound_vars,
+                        binder_predicates,
+                        OnlySelfBounds(false),
+                    );
+                    predicates.extend(bounds.clauses());
+                }
+
+                hir::WherePredicate::RegionPredicate(region_pred) => {
+                    let r1 = self.ast_region_to_region(&region_pred.lifetime, None);
+                    predicates.extend(region_pred.bounds.iter().map(|bound| {
+                        let (r2, span) = match bound {
+                            hir::GenericBound::Outlives(lt) => {
+                                (self.ast_region_to_region(lt, None), lt.ident.span)
+                            }
+                            _ => bug!(),
+                        };
+                        let pred = ty::ClauseKind::RegionOutlives(ty::OutlivesPredicate(r1, r2))
+                            .to_predicate(self.tcx());
+                        (pred, span)
+                    }))
+                }
+
+                hir::WherePredicate::EqPredicate(..) => {
+                    // FIXME(#20041)
+                }
+            }
+        }
+    }
+
     /// Sets `implicitly_sized` to true on `Bounds` if necessary
     pub(crate) fn add_implicitly_sized(
         &self,
@@ -102,6 +228,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
         ast_bounds: I,
         bounds: &mut Bounds<'tcx>,
         bound_vars: &'tcx ty::List<ty::BoundVariableKind>,
+        binder_predicates: &'tcx ty::List<ty::Clause<'tcx>>,
         only_self_bounds: OnlySelfBounds,
     ) {
         for ast_bound in ast_bounds {
@@ -119,6 +246,10 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         }
                         hir::TraitBoundModifier::Maybe => continue,
                     };
+
+                    // TODO: Add in the binder preds from the poly trait ref.
+                    let binder_predicates = binder_predicates;
+
                     let _ = self.instantiate_poly_trait_ref(
                         &poly_trait_ref.trait_ref,
                         poly_trait_ref.span,
@@ -127,6 +258,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         param_ty,
                         bounds,
                         false,
+                        binder_predicates,
                         only_self_bounds,
                     );
                 }
@@ -207,6 +339,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
             }
             }),
             &mut bounds,
+            ty::List::empty(),
             ty::List::empty(),
             only_self_bounds,
         );
@@ -577,6 +710,8 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         ast_bounds.iter(),
                         bounds,
                         projection_ty.bound_vars(),
+                        // TODO: This is wrong, should take preds from binder
+                        ty::List::empty(),
                         only_self_bounds,
                     );
                 }

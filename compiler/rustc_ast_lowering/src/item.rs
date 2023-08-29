@@ -1600,6 +1600,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
                     bounds,
                     span,
                     bound_generic_params: &[],
+                    binder_predicates: &[],
                     origin,
                 }))
             }
@@ -1628,6 +1629,20 @@ impl<'hir> LoweringContext<'_, 'hir> {
                 hir_id: self.next_id(),
                 bound_generic_params: self
                     .lower_generic_params(bound_generic_params, hir::GenericParamSource::Binder),
+                binder_predicates: self.arena.alloc_from_iter(
+                    bound_generic_params.iter().filter_map(|param| {
+                        self.lower_generic_bound_predicate(
+                            param.ident,
+                            param.id,
+                            &param.kind,
+                            &param.bounds,
+                            param.colon_span,
+                            *span,
+                            &ImplTraitContext::Disallowed(ImplTraitPosition::Generic),
+                            PredicateOrigin::GenericParam,
+                        )
+                    }),
+                ),
                 bounded_ty: self
                     .lower_ty(bounded_ty, &ImplTraitContext::Disallowed(ImplTraitPosition::Bound)),
                 bounds: self.lower_param_bounds(

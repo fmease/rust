@@ -868,6 +868,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                 bounds,
                 bound_generic_params,
                 origin,
+                binder_predicates,
                 ..
             }) => {
                 let (bound_vars, binders): (FxIndexMap<LocalDefId, ResolvedArg>, Vec<_>) =
@@ -896,6 +897,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                     walk_list!(this, visit_generic_param, bound_generic_params);
                     this.visit_ty(&bounded_ty);
                     walk_list!(this, visit_param_bound, bounds);
+                    walk_list!(this, visit_where_predicate, binder_predicates);
                 })
             }
             &hir::WherePredicate::RegionPredicate(hir::WhereRegionPredicate {

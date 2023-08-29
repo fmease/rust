@@ -98,7 +98,10 @@ impl<'tcx> Bounds<'tcx> {
         let sized_def_id = tcx.require_lang_item(LangItem::Sized, Some(span));
         let trait_ref = ty::TraitRef::new(tcx, sized_def_id, [ty]);
         // Preferable to put this obligation first, since we report better errors for sized ambiguity.
-        self.clauses.insert(0, (trait_ref.to_predicate(tcx), span));
+        self.clauses.insert(
+            0,
+            (ty::Binder::bind_with_vars(trait_ref, ty::List::empty()).to_predicate(tcx), span),
+        );
     }
 
     pub fn clauses(&self) -> impl Iterator<Item = (ty::Clause<'tcx>, Span)> + '_ {

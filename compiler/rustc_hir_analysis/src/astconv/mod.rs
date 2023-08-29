@@ -687,6 +687,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         args: &GenericArgs<'_>,
         infer_args: bool,
         self_ty: Ty<'tcx>,
+        _binder_predicates: &'tcx ty::List<ty::Clause<'tcx>>,
         only_self_bounds: OnlySelfBounds,
     ) -> GenericArgCountResult {
         let (generic_args, arg_count) = self.create_args_for_ast_path(
@@ -774,6 +775,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         self_ty: Ty<'tcx>,
         bounds: &mut Bounds<'tcx>,
         speculative: bool,
+        binder_predicates: &'tcx ty::List<ty::Clause<'tcx>>,
         only_self_bounds: OnlySelfBounds,
     ) -> GenericArgCountResult {
         let hir_id = trait_ref.hir_ref_id;
@@ -801,6 +803,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             args,
             infer_args,
             self_ty,
+            binder_predicates,
             only_self_bounds,
         )
     }
@@ -837,6 +840,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             args,
             infer_args,
             self_ty,
+            ty::List::empty(),
             only_self_bounds,
         );
     }

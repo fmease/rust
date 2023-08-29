@@ -46,6 +46,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 dummy_self,
                 &mut bounds,
                 false,
+                // TODO: dyn traits should have no binder preds
+                ty::List::empty(),
                 // FIXME: This should be `true`, but we don't really handle
                 // associated type bounds or type aliases in objects in a way
                 // that makes this meaningful, I think.

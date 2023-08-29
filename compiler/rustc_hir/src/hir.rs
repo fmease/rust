@@ -779,9 +779,11 @@ pub struct WhereBoundPredicate<'hir> {
     pub origin: PredicateOrigin,
     /// Any generics from a `for` binding.
     pub bound_generic_params: &'hir [GenericParam<'hir>],
+    /// Predicates on the `for<T>` binder itself, such as `for<T: Trait> ...`
+    pub binder_predicates: &'hir [WherePredicate<'hir>],
     /// The type being bounded.
     pub bounded_ty: &'hir Ty<'hir>,
-    /// Trait and lifetime bounds (e.g., `Clone + Send + 'static`).
+    /// Trait and lifetime bounds for `bounded_ty` (e.g., `Clone + Send + 'static`).
     pub bounds: GenericBounds<'hir>,
 }
 
