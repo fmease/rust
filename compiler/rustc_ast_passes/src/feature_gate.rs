@@ -170,10 +170,12 @@ impl<'a> PostExpansionVisitor<'a> {
             )
             .emit();
         }
-        for param in params {
-            if !param.bounds.is_empty() {
-                let spans: Vec<_> = param.bounds.iter().map(|b| b.span()).collect();
-                self.sess.emit_err(errors::ForbiddenLifetimeBound { spans });
+        if !self.features.non_lifetime_binders {
+            for param in params {
+                if !param.bounds.is_empty() {
+                    let spans: Vec<_> = param.bounds.iter().map(|b| b.span()).collect();
+                    self.sess.emit_err(errors::ForbiddenLifetimeBound { spans });
+                }
             }
         }
     }
