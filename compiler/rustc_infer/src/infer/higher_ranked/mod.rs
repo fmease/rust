@@ -74,6 +74,8 @@ impl<'tcx> InferCtxt<'tcx> {
     where
         T: TypeFoldable<TyCtxt<'tcx>> + Copy,
     {
+        assert_eq!(binder.skip_binder_predicates(), ty::List::empty());
+
         if let Some(inner) = binder.no_bound_vars() {
             return inner;
         }

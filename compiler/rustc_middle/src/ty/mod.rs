@@ -97,7 +97,7 @@ pub use self::rvalue_scopes::RvalueScopes;
 pub use self::sty::BoundRegionKind::*;
 pub use self::sty::{
     AliasTy, Article, Binder, BoundRegion, BoundRegionKind, BoundTy, BoundTyKind, BoundVar,
-    BoundVariableKind, CanonicalPolyFnSig, ClauseKind, ClosureArgs, ClosureArgsParts, ConstKind,
+    BoundVariableKind, CanonicalPolyFnSig, ClosureArgs, ClosureArgsParts, ConstKind,
     ConstVid, CoroutineArgs, CoroutineArgsParts, EarlyBoundRegion, EffectVid, ExistentialPredicate,
     ExistentialProjection, ExistentialTraitRef, FnSig, FreeRegion, GenSig, InlineConstArgs,
     InlineConstArgsParts, ParamConst, ParamTy, PolyExistentialPredicate, PolyExistentialProjection,
@@ -244,8 +244,8 @@ pub enum ImplSubject<'tcx> {
     Inherent(Ty<'tcx>),
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, TyEncodable, TyDecodable, HashStable, Debug)]
-#[derive(TypeFoldable, TypeVisitable)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, TyEncodable, TyDecodable)]
 pub enum ImplPolarity {
     /// `impl Trait for Type`
     Positive,
@@ -573,7 +573,7 @@ impl rustc_errors::IntoDiagnosticArg for Clause<'_> {
 /// A subset of predicates which can be assumed by the trait solver. They show up in
 /// an item's where clauses, hence the name `Clause`, and may either be user-written
 /// (such as traits) or may be inserted during lowering.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, HashStable)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, HashStable, PartialOrd, Ord)]
 #[rustc_pass_by_value]
 pub struct Clause<'tcx>(Interned<'tcx, WithCachedTypeInfo<ty::Binder<'tcx, PredicateKind<'tcx>>>>);
 
@@ -622,6 +622,98 @@ impl<'tcx> Clause<'tcx> {
             Some(clause.rebind(o))
         } else {
             None
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
+/// A clause is something that can appear in where bounds or be inferred
+/// by implied bounds.
+pub enum ClauseKind<'tcx> {
+    /// Corresponds to `where Foo: Bar<A, B, C>`. `Foo` here would be
+    /// the `Self` type of the trait reference and `A`, `B`, and `C`
+    /// would be the type parameters.
+    Trait(TraitPredicate<'tcx>),
+
+    /// `where 'a: 'b`
+    RegionOutlives(RegionOutlivesPredicate<'tcx>),
+
+    /// `where T: 'a`
+    TypeOutlives(TypeOutlivesPredicate<'tcx>),
+
+    /// `where <T as TraitRef>::Name == X`, approximately.
+    /// See the `ProjectionPredicate` struct for details.
+    Projection(ProjectionPredicate<'tcx>),
+
+    /// Ensures that a const generic argument to a parameter `const N: u8`
+    /// is of type `u8`.
+    ConstArgHasType(Const<'tcx>, Ty<'tcx>),
+
+    /// No syntax: `T` well-formed.
+    WellFormed(GenericArg<'tcx>),
+
+    /// Constant initializer must evaluate successfully.
+    ConstEvaluatable(ty::Const<'tcx>),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
+pub enum PredicateKind<'tcx> {
+    /// Prove a clause
+    Clause(ClauseKind<'tcx>),
+
+    /// Trait must be object-safe.
+    ObjectSafe(DefId),
+
+    /// No direct syntax. May be thought of as `where T: FnFoo<...>`
+    /// for some generic args `...` and `T` being a closure type.
+    /// Satisfied (or refuted) once we know the closure's kind.
+    ClosureKind(DefId, GenericArgsRef<'tcx>, ClosureKind),
+
+    /// `T1 <: T2`
+    ///
+    /// This obligation is created most often when we have two
+    /// unresolved type variables and hence don't have enough
+    /// information to process the subtyping obligation yet.
+    Subtype(SubtypePredicate<'tcx>),
+
+    /// `T1` coerced to `T2`
+    ///
+    /// Like a subtyping obligation, this is created most often
+    /// when we have two unresolved type variables and hence
+    /// don't have enough information to process the coercion
+    /// obligation yet. At the moment, we actually process coercions
+    /// very much like subtyping and don't handle the full coercion
+    /// logic.
+    Coerce(CoercePredicate<'tcx>),
+
+    /// Constants must be equal. The first component is the const that is expected.
+    ConstEquate(Const<'tcx>, Const<'tcx>),
+
+    /// A marker predicate that is always ambiguous.
+    /// Used for coherence to mark opaque types as possibly equal to each other but ambiguous.
+    Ambiguous,
+
+    /// Separate from `ClauseKind::Projection` which is used for normalization in new solver.
+    /// This predicate requires two terms to be equal to eachother.
+    ///
+    /// Only used for new solver
+    AliasRelate(Term<'tcx>, Term<'tcx>, AliasRelationDirection),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(HashStable, Debug, TyEncodable, TyDecodable)]
+pub enum AliasRelationDirection {
+    Equate,
+    Subtype,
+}
+
+impl std::fmt::Display for AliasRelationDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AliasRelationDirection::Equate => write!(f, "=="),
+            AliasRelationDirection::Subtype => write!(f, "<:"),
         }
     }
 }
@@ -746,8 +838,8 @@ impl<'tcx> Clause<'tcx> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, TyEncodable, TyDecodable)]
-#[derive(HashStable, TypeFoldable, TypeVisitable, Lift)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
 pub struct TraitPredicate<'tcx> {
     pub trait_ref: TraitRef<'tcx>,
 
@@ -805,8 +897,8 @@ pub type PolyTypeOutlivesPredicate<'tcx> = ty::Binder<'tcx, TypeOutlivesPredicat
 /// Encodes that `a` must be a subtype of `b`. The `a_is_expected` flag indicates
 /// whether the `a` type is the type that we should label as "expected" when
 /// presenting user diagnostics.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, TyEncodable, TyDecodable)]
-#[derive(HashStable, TypeFoldable, TypeVisitable, Lift)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
 pub struct SubtypePredicate<'tcx> {
     pub a_is_expected: bool,
     pub a: Ty<'tcx>,
@@ -815,8 +907,8 @@ pub struct SubtypePredicate<'tcx> {
 pub type PolySubtypePredicate<'tcx> = ty::Binder<'tcx, SubtypePredicate<'tcx>>;
 
 /// Encodes that we have to coerce *from* the `a` type to the `b` type.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, TyEncodable, TyDecodable)]
-#[derive(HashStable, TypeFoldable, TypeVisitable, Lift)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
 pub struct CoercePredicate<'tcx> {
     pub a: Ty<'tcx>,
     pub b: Ty<'tcx>,
@@ -1021,8 +1113,8 @@ impl From<ty::ConstVid> for TermVid {
 /// equality between arbitrary types. Processing an instance of
 /// Form #2 eventually yields one of these `ProjectionPredicate`
 /// instances to normalize the LHS.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, TyEncodable, TyDecodable)]
-#[derive(HashStable, TypeFoldable, TypeVisitable, Lift)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(HashStable, TypeFoldable, TypeVisitable, Lift, TyEncodable, TyDecodable)]
 pub struct ProjectionPredicate<'tcx> {
     pub projection_ty: AliasTy<'tcx>,
     pub term: Term<'tcx>,

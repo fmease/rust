@@ -1003,6 +1003,7 @@ impl BoundVariableKind {
 pub struct Binder<'tcx, T> {
     value: T,
     bound_vars: &'tcx List<BoundVariableKind>,
+    bound_predicates: &'tcx List<ty::Clause<'tcx>>,
 }
 
 impl<'tcx, T> Binder<'tcx, T>
@@ -1019,7 +1020,7 @@ where
             !value.has_escaping_bound_vars(),
             "`{value:?}` has escaping bound vars, so it cannot be wrapped in a dummy binder."
         );
-        Binder { value, bound_vars: ty::List::empty() }
+        Binder { value, bound_vars: ty::List::empty(), bound_predicates: ty::List::empty() }
     }
 
     pub fn bind_with_vars(value: T, bound_vars: &'tcx List<BoundVariableKind>) -> Binder<'tcx, T> {
@@ -1027,11 +1028,28 @@ where
             let mut validator = ValidateBoundVars::new(bound_vars);
             value.visit_with(&mut validator);
         }
-        Binder { value, bound_vars }
+        Binder { value, bound_vars, bound_predicates: ty::List::empty() }
+    }
+
+    pub fn bind_with_vars_and_predicates(
+        value: T,
+        bound_vars: &'tcx List<BoundVariableKind>,
+        bound_predicates: &'tcx List<ty::Clause<'tcx>>,
+    ) -> Binder<'tcx, T> {
+        if cfg!(debug_assertions) {
+            let mut validator = ValidateBoundVars::new(bound_vars);
+            value.visit_with(&mut validator);
+            bound_predicates.visit_with(&mut validator);
+        }
+        Binder { value, bound_vars, bound_predicates }
     }
 }
 
 impl<'tcx, T> Binder<'tcx, T> {
+    pub fn skip_binder_predicates(self) -> &'tcx List<ty::Clause<'tcx>> {
+        self.bound_predicates
+    }
+
     /// Skips the binder and returns the "bound" value. This is a
     /// risky thing to do because it's easy to get confused about
     /// De Bruijn indices and the like. It is usually better to
@@ -1057,14 +1075,22 @@ impl<'tcx, T> Binder<'tcx, T> {
     }
 
     pub fn as_ref(&self) -> Binder<'tcx, &T> {
-        Binder { value: &self.value, bound_vars: self.bound_vars }
+        Binder {
+            value: &self.value,
+            bound_vars: self.bound_vars,
+            bound_predicates: self.bound_predicates,
+        }
     }
 
     pub fn as_deref(&self) -> Binder<'tcx, &T::Target>
     where
         T: Deref,
     {
-        Binder { value: &self.value, bound_vars: self.bound_vars }
+        Binder {
+            value: &self.value,
+            bound_vars: self.bound_vars,
+            bound_predicates: self.bound_predicates,
+        }
     }
 
     pub fn map_bound_ref_unchecked<F, U>(&self, f: F) -> Binder<'tcx, U>
@@ -1072,7 +1098,7 @@ impl<'tcx, T> Binder<'tcx, T> {
         F: FnOnce(&T) -> U,
     {
         let value = f(&self.value);
-        Binder { value, bound_vars: self.bound_vars }
+        Binder { value, bound_vars: self.bound_vars, bound_predicates: self.bound_predicates }
     }
 
     pub fn map_bound_ref<F, U: TypeVisitable<TyCtxt<'tcx>>>(&self, f: F) -> Binder<'tcx, U>
@@ -1086,13 +1112,13 @@ impl<'tcx, T> Binder<'tcx, T> {
     where
         F: FnOnce(T) -> U,
     {
-        let Binder { value, bound_vars } = self;
+        let Binder { value, bound_vars, bound_predicates } = self;
         let value = f(value);
         if cfg!(debug_assertions) {
             let mut validator = ValidateBoundVars::new(bound_vars);
             value.visit_with(&mut validator);
         }
-        Binder { value, bound_vars }
+        Binder { value, bound_vars, bound_predicates }
     }
 
     pub fn try_map_bound<F, U: TypeVisitable<TyCtxt<'tcx>>, E>(
@@ -1102,13 +1128,13 @@ impl<'tcx, T> Binder<'tcx, T> {
     where
         F: FnOnce(T) -> Result<U, E>,
     {
-        let Binder { value, bound_vars } = self;
+        let Binder { value, bound_vars, bound_predicates } = self;
         let value = f(value)?;
         if cfg!(debug_assertions) {
             let mut validator = ValidateBoundVars::new(bound_vars);
             value.visit_with(&mut validator);
         }
-        Ok(Binder { value, bound_vars })
+        Ok(Binder { value, bound_vars, bound_predicates })
     }
 
     /// Wraps a `value` in a binder, using the same bound variables as the
@@ -1124,7 +1150,7 @@ impl<'tcx, T> Binder<'tcx, T> {
     where
         U: TypeVisitable<TyCtxt<'tcx>>,
     {
-        Binder::bind_with_vars(value, self.bound_vars)
+        Binder::bind_with_vars_and_predicates(value, self.bound_vars, self.bound_predicates)
     }
 
     /// Unwraps and returns the value within, but only if it contains
@@ -1154,23 +1180,26 @@ impl<'tcx, T> Binder<'tcx, T> {
     where
         F: FnOnce(T) -> (U, V),
     {
-        let Binder { value, bound_vars } = self;
+        let Binder { value, bound_vars, bound_predicates } = self;
         let (u, v) = f(value);
-        (Binder { value: u, bound_vars }, Binder { value: v, bound_vars })
+        (
+            Binder { value: u, bound_vars, bound_predicates },
+            Binder { value: v, bound_vars, bound_predicates },
+        )
     }
 }
 
 impl<'tcx, T> Binder<'tcx, Option<T>> {
     pub fn transpose(self) -> Option<Binder<'tcx, T>> {
-        let Binder { value, bound_vars } = self;
-        value.map(|value| Binder { value, bound_vars })
+        let Binder { value, bound_vars, bound_predicates } = self;
+        value.map(|value| Binder { value, bound_vars, bound_predicates })
     }
 }
 
 impl<'tcx, T: IntoIterator> Binder<'tcx, T> {
     pub fn iter(self) -> impl Iterator<Item = ty::Binder<'tcx, T::Item>> {
-        let Binder { value, bound_vars } = self;
-        value.into_iter().map(|value| Binder { value, bound_vars })
+        let Binder { value, bound_vars, bound_predicates } = self;
+        value.into_iter().map(|value| Binder { value, bound_vars, bound_predicates })
     }
 }
 
