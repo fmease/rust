@@ -1046,7 +1046,7 @@ where
 }
 
 impl<'tcx, T> Binder<'tcx, T> {
-    pub fn skip_binder_predicates(self) -> &'tcx List<ty::Clause<'tcx>> {
+    pub fn skip_binder_predicates(&self) -> &'tcx List<ty::Clause<'tcx>> {
         self.bound_predicates
     }
 

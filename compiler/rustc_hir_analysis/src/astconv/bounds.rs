@@ -83,9 +83,6 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     let binder_predicates = self.tcx().mk_clauses_from_iter(
                         binder_predicates.into_iter().map(|(clause, _)| clause),
                     );
-                    if !binder_predicates.is_empty() {
-                        println!("binder_predicates = {binder_predicates:#?}");
-                    }
 
                     // Keep the type around in a dummy predicate, in case of no bounds.
                     // That way, `where Ty:` is not a complete noop (see #53696) and `Ty`
@@ -710,8 +707,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         ast_bounds.iter(),
                         bounds,
                         projection_ty.bound_vars(),
-                        // TODO: This is wrong, should take preds from binder
-                        ty::List::empty(),
+                        projection_ty.skip_binder_predicates(),
                         only_self_bounds,
                     );
                 }

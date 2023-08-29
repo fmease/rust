@@ -108,6 +108,55 @@ impl<'tcx> InferCtxt<'tcx> {
         self.tcx.replace_bound_vars_uncached(binder, delegate)
     }
 
+    /// Replaces all bound variables (lifetimes, types, and constants) bound by
+    /// `binder` with placeholder variables in a new universe. This means that the
+    /// new placeholders can only be named by inference variables created after
+    /// this method has been called.
+    ///
+    /// This is the first step of checking subtyping when higher-ranked things are involved.
+    /// For more details visit the relevant sections of the [rustc dev guide].
+    ///
+    /// [rustc dev guide]: https://rustc-dev-guide.rust-lang.org/traits/hrtb.html
+    #[instrument(level = "debug", skip(self), ret)]
+    pub fn instantiate_binder_and_assumptions_with_placeholders<T>(
+        &self,
+        binder: ty::Binder<'tcx, T>,
+    ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>)
+    where
+        T: TypeFoldable<TyCtxt<'tcx>> + Copy,
+    {
+        if let Some(inner) = binder.no_bound_vars() {
+            return (inner, ty::List::empty());
+        }
+
+        let next_universe = self.create_next_universe();
+
+        let delegate = FnMutDelegate {
+            regions: &mut |br: ty::BoundRegion| {
+                ty::Region::new_placeholder(
+                    self.tcx,
+                    ty::PlaceholderRegion { universe: next_universe, bound: br },
+                )
+            },
+            types: &mut |bound_ty: ty::BoundTy| {
+                Ty::new_placeholder(
+                    self.tcx,
+                    ty::PlaceholderType { universe: next_universe, bound: bound_ty },
+                )
+            },
+            consts: &mut |bound_var: ty::BoundVar, ty| {
+                ty::Const::new_placeholder(
+                    self.tcx,
+                    ty::PlaceholderConst { universe: next_universe, bound: bound_var },
+                    ty,
+                )
+            },
+        };
+
+        debug!(?next_universe);
+        self.tcx.replace_bound_vars_and_predicates_uncached(binder, delegate)
+    }
+
     /// See [RegionConstraintCollector::leak_check][1]. We only check placeholder
     /// leaking into `outer_universe`, i.e. placeholders which cannot be named by that
     /// universe.

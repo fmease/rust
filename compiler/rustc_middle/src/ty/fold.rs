@@ -317,6 +317,15 @@ impl<'tcx> TyCtxt<'tcx> {
         self.replace_escaping_bound_vars_uncached(value.skip_binder(), delegate)
     }
 
+    pub fn replace_bound_vars_and_predicates_uncached<T: TypeFoldable<TyCtxt<'tcx>>>(
+        self,
+        value: Binder<'tcx, T>,
+        delegate: impl BoundVarReplacerDelegate<'tcx>,
+    ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>) {
+        let preds = value.skip_binder_predicates();
+        self.replace_escaping_bound_vars_uncached((value.skip_binder(), preds), delegate)
+    }
+
     /// Replaces any late-bound regions bound in `value` with
     /// free variants attached to `all_outlive_scope`.
     pub fn liberate_late_bound_regions<T>(

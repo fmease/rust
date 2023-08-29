@@ -1526,6 +1526,71 @@ impl<'tcx> InferCtxt<'tcx> {
         self.tcx.replace_bound_vars_uncached(value, delegate)
     }
 
+    pub fn instantiate_binder_and_predicates_with_fresh_vars<T>(
+        &self,
+        span: Span,
+        lbrct: LateBoundRegionConversionTime,
+        value: ty::Binder<'tcx, T>,
+    ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>)
+    where
+        T: TypeFoldable<TyCtxt<'tcx>> + Copy,
+    {
+        if let Some(inner) = value.no_bound_vars() {
+            return (inner, ty::List::empty());
+        }
+
+        struct ToFreshVars<'a, 'tcx> {
+            infcx: &'a InferCtxt<'tcx>,
+            span: Span,
+            lbrct: LateBoundRegionConversionTime,
+            map: FxHashMap<ty::BoundVar, ty::GenericArg<'tcx>>,
+        }
+
+        impl<'tcx> BoundVarReplacerDelegate<'tcx> for ToFreshVars<'_, 'tcx> {
+            fn replace_region(&mut self, br: ty::BoundRegion) -> ty::Region<'tcx> {
+                self.map
+                    .entry(br.var)
+                    .or_insert_with(|| {
+                        self.infcx
+                            .next_region_var(LateBoundRegion(self.span, br.kind, self.lbrct))
+                            .into()
+                    })
+                    .expect_region()
+            }
+            fn replace_ty(&mut self, bt: ty::BoundTy) -> Ty<'tcx> {
+                self.map
+                    .entry(bt.var)
+                    .or_insert_with(|| {
+                        self.infcx
+                            .next_ty_var(TypeVariableOrigin {
+                                kind: TypeVariableOriginKind::MiscVariable,
+                                span: self.span,
+                            })
+                            .into()
+                    })
+                    .expect_ty()
+            }
+            fn replace_const(&mut self, bv: ty::BoundVar, ty: Ty<'tcx>) -> ty::Const<'tcx> {
+                self.map
+                    .entry(bv)
+                    .or_insert_with(|| {
+                        self.infcx
+                            .next_const_var(
+                                ty,
+                                ConstVariableOrigin {
+                                    kind: ConstVariableOriginKind::MiscVariable,
+                                    span: self.span,
+                                },
+                            )
+                            .into()
+                    })
+                    .expect_const()
+            }
+        }
+        let delegate = ToFreshVars { infcx: self, span, lbrct, map: Default::default() };
+        self.tcx.replace_bound_vars_and_predicates_uncached(value, delegate)
+    }
+
     /// See the [`region_constraints::RegionConstraintCollector::verify_generic_bound`] method.
     pub fn verify_generic_bound(
         &self,

@@ -97,12 +97,15 @@ impl<'tcx> assembly::GoalKind<'tcx> for TraitPredicate<'tcx> {
             {
                 // FIXME: Constness
                 ecx.probe_misc_candidate("assumption").enter(|ecx| {
-                    let assumption_trait_pred = ecx.instantiate_binder_with_infer(trait_clause);
+                    let (assumption_trait_pred, additional_goals) =
+                        ecx.instantiate_binder_and_predicates_with_infer(trait_clause);
                     ecx.eq(
                         goal.param_env,
                         goal.predicate.trait_ref,
                         assumption_trait_pred.trait_ref,
                     )?;
+                    let tcx = ecx.tcx();
+                    ecx.add_goals(additional_goals.iter().map(|pred| goal.with(tcx, pred)));
                     then(ecx)
                 })
             } else {

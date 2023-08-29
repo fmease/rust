@@ -1724,6 +1724,17 @@ impl<'tcx> ParamEnv<'tcx> {
         ty::ParamEnv { packed: CopyTaggedPtr::new(caller_bounds, ParamTag { reveal }) }
     }
 
+    pub fn augment(
+        tcx: TyCtxt<'tcx>,
+        param_env: ty::ParamEnv<'tcx>,
+        more_caller_bounds: &'tcx List<Clause<'tcx>>,
+    ) -> Self {
+        ty::ParamEnv::new(
+            tcx.mk_clauses_from_iter(param_env.caller_bounds().iter().chain(more_caller_bounds)),
+            param_env.reveal(),
+        )
+    }
+
     pub fn with_user_facing(mut self) -> Self {
         self.packed.set_tag(ParamTag { reveal: Reveal::UserFacing, ..self.packed.tag() });
         self

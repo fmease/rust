@@ -500,8 +500,13 @@ impl<'a, 'tcx> EvalCtxt<'a, 'tcx> {
                 }
             }
         } else {
-            let kind = self.infcx.instantiate_binder_with_placeholders(kind);
-            let goal = goal.with(self.tcx(), ty::Binder::dummy(kind));
+            let (kind, additional_assumptions) =
+                self.instantiate_binder_and_assumptions_with_placeholders(kind);
+            let goal = Goal::new(
+                self.tcx(),
+                ty::ParamEnv::augment(self.tcx(), goal.param_env, additional_assumptions),
+                ty::Binder::dummy(kind),
+            );
             self.add_goal(goal);
             self.evaluate_added_goals_and_make_canonical_response(Certainty::Yes)
         }
@@ -799,11 +804,33 @@ impl<'tcx> EvalCtxt<'_, 'tcx> {
         )
     }
 
+    pub(super) fn instantiate_binder_and_predicates_with_infer<
+        T: TypeFoldable<TyCtxt<'tcx>> + Copy,
+    >(
+        &self,
+        value: ty::Binder<'tcx, T>,
+    ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>) {
+        self.infcx.instantiate_binder_and_predicates_with_fresh_vars(
+            DUMMY_SP,
+            LateBoundRegionConversionTime::HigherRankedType,
+            value,
+        )
+    }
+
     pub(super) fn instantiate_binder_with_placeholders<T: TypeFoldable<TyCtxt<'tcx>> + Copy>(
         &self,
         value: ty::Binder<'tcx, T>,
     ) -> T {
         self.infcx.instantiate_binder_with_placeholders(value)
+    }
+
+    pub(super) fn instantiate_binder_and_assumptions_with_placeholders<
+        T: TypeFoldable<TyCtxt<'tcx>> + Copy,
+    >(
+        &self,
+        value: ty::Binder<'tcx, T>,
+    ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>) {
+        self.infcx.instantiate_binder_and_assumptions_with_placeholders(value)
     }
 
     pub(super) fn resolve_vars_if_possible<T>(&self, value: T) -> T
