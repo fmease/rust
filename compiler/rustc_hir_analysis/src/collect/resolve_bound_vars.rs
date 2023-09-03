@@ -398,6 +398,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         self.with(scope, |this| {
             walk_list!(this, visit_generic_param, trait_ref.bound_generic_params);
             this.visit_trait_ref(&trait_ref.trait_ref);
+            walk_list!(this, visit_where_predicate, trait_ref.binder_predicates);
         });
     }
 }

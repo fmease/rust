@@ -34,6 +34,10 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         let mut potential_assoc_types = Vec::new();
         let dummy_self = self.tcx().types.trait_object_dummy_self;
         for trait_bound in hir_trait_bounds.iter().rev() {
+            assert!(
+                trait_bound.binder_predicates.is_empty(),
+                "FIXME(non_lifetime_binders): object types should not have binders"
+            );
             if let GenericArgCountResult {
                 correct:
                     Err(GenericArgCountMismatch { invalid_args: cur_potential_assoc_types, .. }),
@@ -46,7 +50,6 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 dummy_self,
                 &mut bounds,
                 false,
-                // TODO: dyn traits should have no binder preds
                 ty::List::empty(),
                 // FIXME: This should be `true`, but we don't really handle
                 // associated type bounds or type aliases in objects in a way

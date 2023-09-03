@@ -821,18 +821,28 @@ impl<'tcx> Clause<'tcx> {
         let pred_bound_vars = bound_pred.bound_vars();
         let trait_bound_vars = trait_ref.bound_vars();
         // 1) Self: Bar1<'a, '^0.0> -> Self: Bar1<'a, '^0.1>
-        let shifted_pred =
-            tcx.shift_bound_var_indices(trait_bound_vars.len(), bound_pred.skip_binder());
+        let (shifted_pred, shifted_bound_clauses) = tcx.shift_bound_var_indices(
+            trait_bound_vars.len(),
+            (bound_pred.skip_binder(), bound_pred.skip_binder_predicates()),
+        );
         // 2) Self: Bar1<'a, '^0.1> -> T: Bar1<'^0.0, '^0.1>
         let new = EarlyBinder::bind(shifted_pred).instantiate(tcx, trait_ref.skip_binder().args);
         // 3) ['x] + ['b] -> ['x, 'b]
         let bound_vars =
             tcx.mk_bound_variable_kinds_from_iter(trait_bound_vars.iter().chain(pred_bound_vars));
 
+        let binder_predicates = tcx.mk_clauses_from_iter(
+            trait_ref.skip_binder_predicates().into_iter().chain(shifted_bound_clauses),
+        );
+
         // FIXME: Is it really perf sensitive to use reuse_or_mk_predicate here?
         tcx.reuse_or_mk_predicate(
             self.as_predicate(),
-            ty::Binder::bind_with_vars(PredicateKind::Clause(new), bound_vars),
+            ty::Binder::bind_with_vars_and_predicates(
+                PredicateKind::Clause(new),
+                bound_vars,
+                binder_predicates,
+            ),
         )
         .expect_clause()
     }

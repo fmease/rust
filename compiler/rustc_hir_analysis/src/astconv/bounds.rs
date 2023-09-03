@@ -18,8 +18,8 @@ use crate::errors;
 impl<'tcx> dyn AstConv<'tcx> + '_ {
     pub(crate) fn lower_where_predicates(
         &self,
-        params: &'tcx [hir::GenericParam<'tcx>],
-        hir_predicates: &'tcx [hir::WherePredicate<'tcx>],
+        params: &[hir::GenericParam<'_>],
+        hir_predicates: &[hir::WherePredicate<'_>],
         predicates: &mut FxIndexSet<(ty::Clause<'tcx>, Span)>,
     ) {
         // Collect the predicates that were written inline by the user on each
@@ -140,19 +140,19 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
     }
 
     /// Sets `implicitly_sized` to true on `Bounds` if necessary
-    pub(crate) fn add_implicitly_sized(
+    pub(crate) fn add_implicitly_sized<'hir>(
         &self,
         bounds: &mut Bounds<'tcx>,
         self_ty: Ty<'tcx>,
-        ast_bounds: &'tcx [hir::GenericBound<'tcx>],
-        self_ty_where_predicates: Option<(LocalDefId, &'tcx [hir::WherePredicate<'tcx>])>,
+        ast_bounds: &'hir [hir::GenericBound<'hir>],
+        self_ty_where_predicates: Option<(LocalDefId, &'hir [hir::WherePredicate<'hir>])>,
         span: Span,
     ) {
         let tcx = self.tcx();
 
         // Try to find an unbound in bounds.
         let mut unbound = None;
-        let mut search_bounds = |ast_bounds: &'tcx [hir::GenericBound<'tcx>]| {
+        let mut search_bounds = |ast_bounds: &'hir [hir::GenericBound<'hir>]| {
             for ab in ast_bounds {
                 if let hir::GenericBound::Trait(ptr, hir::TraitBoundModifier::Maybe) = ab {
                     if unbound.is_none() {
@@ -244,8 +244,16 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         hir::TraitBoundModifier::Maybe => continue,
                     };
 
-                    // TODO: Add in the binder preds from the poly trait ref.
-                    let binder_predicates = binder_predicates;
+                    let mut additional_binder_predicates = FxIndexSet::default();
+                    self.lower_where_predicates(
+                        poly_trait_ref.bound_generic_params,
+                        poly_trait_ref.binder_predicates,
+                        &mut additional_binder_predicates,
+                    );
+                    let binder_predicates =
+                        self.tcx().mk_clauses_from_iter(binder_predicates.into_iter().chain(
+                            additional_binder_predicates.into_iter().map(|(clause, _)| clause),
+                        ));
 
                     let _ = self.instantiate_poly_trait_ref(
                         &poly_trait_ref.trait_ref,

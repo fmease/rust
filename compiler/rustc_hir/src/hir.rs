@@ -3002,6 +3002,9 @@ pub struct PolyTraitRef<'hir> {
     /// The `'a` in `for<'a> Foo<&'a T>`.
     pub bound_generic_params: &'hir [GenericParam<'hir>],
 
+    /// Predicates on the `for<T>` binder itself, such as `for<T: Trait> ...`
+    pub binder_predicates: &'hir [WherePredicate<'hir>],
+
     /// The `Foo<&'a T>` in `for<'a> Foo<&'a T>`.
     pub trait_ref: TraitRef<'hir>,
 

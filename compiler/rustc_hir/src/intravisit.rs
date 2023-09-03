@@ -1088,6 +1088,7 @@ pub fn walk_param_bound<'v, V: Visitor<'v>>(visitor: &mut V, bound: &'v GenericB
 pub fn walk_poly_trait_ref<'v, V: Visitor<'v>>(visitor: &mut V, trait_ref: &'v PolyTraitRef<'v>) {
     walk_list!(visitor, visit_generic_param, trait_ref.bound_generic_params);
     visitor.visit_trait_ref(&trait_ref.trait_ref);
+    walk_list!(visitor, visit_where_predicate, trait_ref.binder_predicates);
 }
 
 pub fn walk_struct_def<'v, V: Visitor<'v>>(

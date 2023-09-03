@@ -712,6 +712,16 @@ impl<'tcx> ItemCtxt<'tcx> {
                 }
             };
 
+            let mut binder_predicates = FxIndexSet::default();
+            self.astconv().lower_where_predicates(
+                predicate.bound_generic_params,
+                predicate.binder_predicates,
+                &mut binder_predicates,
+            );
+            let binder_predicates = self
+                .tcx
+                .mk_clauses_from_iter(binder_predicates.into_iter().map(|(clause, _)| clause));
+
             // Subtle: If we're collecting `SelfAndAssociatedTypeBounds`, then we
             // want to only consider predicates with `Self: ...`, but we don't want
             // `OnlySelfBounds(true)` since we want to collect the nested associated
@@ -733,8 +743,7 @@ impl<'tcx> ItemCtxt<'tcx> {
                 }),
                 &mut bounds,
                 bound_vars,
-                // TODO: convert `where_bound_predicate` above accordingly
-                ty::List::empty(),
+                binder_predicates,
                 only_self_bounds,
             );
         }

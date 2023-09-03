@@ -265,7 +265,7 @@ pub fn hir_trait_to_predicates<'tcx>(
         self_ty,
         &mut bounds,
         true,
-        // TODO: This is probably wrong!
+        // FIXME(non_lifetime_binders): This is probably not right.
         ty::List::empty(),
         OnlySelfBounds(false),
     );
