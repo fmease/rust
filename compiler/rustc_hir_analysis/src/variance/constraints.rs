@@ -8,6 +8,7 @@ use rustc_hir as hir;
 use rustc_hir::def::DefKind;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_middle::ty::{GenericArgKind, GenericArgsRef};
+use rustc_middle::ty::{TypeVisitable, TypeVisitor};
 
 use super::terms::VarianceTerm::*;
 use super::terms::*;
@@ -379,12 +380,26 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
         c: ty::Const<'tcx>,
         variance: VarianceTermPtr<'a>,
     ) {
+        eprintln!("::: add_constraints_from_ct({c:?}, {variance:?})");
+
         debug!("add_constraints_from_const(c={:?}, variance={:?})", c, variance);
 
         match &c.kind() {
             ty::ConstKind::Unevaluated(uv) => {
+                let mut visitor = CtVisitor { tcx: self.tcx() };
+                uv.visit_with(&mut visitor);
+
                 self.add_constraints_from_invariant_args(current, uv.args, variance);
             }
+            // FIXME: only for lazy ty aliases for perf reasons
+            ty::ConstKind::Param(param) => {
+                eprintln!("::: param");
+                self.add_constraint(current, param.index, variance);
+            }
+            ty::ConstKind::Expr(expr) => {
+                eprintln!("::: expr={expr:?}");
+            }
+            // @
             _ => {}
         }
     }
@@ -456,5 +471,24 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 self.add_constraints_from_ty(current, mt.ty, variance);
             }
         }
+    }
+}
+
+struct CtVisitor<'tcx> {
+    #[allow(dead_code)]
+    tcx: TyCtxt<'tcx>,
+}
+
+impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for CtVisitor<'tcx> {
+    fn visit_ty(&mut self, t: Ty<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
+        eprintln!("XXX Ty t={t:?}");
+
+        std::ops::ControlFlow::Continue(())
+    }
+
+    fn visit_const(&mut self, c: ty::Const<'tcx>) -> std::ops::ControlFlow<Self::BreakTy> {
+        eprintln!("CONSTITUENT CONST| {c:?}");
+
+        std::ops::ControlFlow::Continue(())
     }
 }

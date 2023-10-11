@@ -169,6 +169,7 @@ fn enforce_impl_params_are_constrained(tcx: TyCtxt<'_>, impl_def_id: LocalDefId)
     // used elsewhere are not projected back out.
 }
 
+// @
 fn report_unused_parameter(tcx: TyCtxt<'_>, span: Span, kind: &str, name: Symbol) {
     let mut err = struct_span_err!(
         tcx.sess,

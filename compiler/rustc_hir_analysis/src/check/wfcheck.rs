@@ -1,9 +1,11 @@
 use crate::autoderef::Autoderef;
 use crate::constrained_generic_params::{identify_constrained_generic_params, Parameter};
+use crate::errors;
 
+use hir::def::DefKind;
 use rustc_ast as ast;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
-use rustc_errors::{pluralize, struct_span_err, Applicability, DiagnosticBuilder, ErrorGuaranteed};
+use rustc_errors::{pluralize, struct_span_err, Applicability, ErrorGuaranteed};
 use rustc_hir as hir;
 use rustc_hir::def_id::{DefId, LocalDefId, LocalModDefId};
 use rustc_hir::lang_items::LangItem;
@@ -20,7 +22,7 @@ use rustc_middle::ty::{
 };
 use rustc_middle::ty::{GenericArgKind, GenericArgs};
 use rustc_session::parse::feature_err;
-use rustc_span::symbol::{sym, Ident, Symbol};
+use rustc_span::symbol::{sym, Ident};
 use rustc_span::{Span, DUMMY_SP};
 use rustc_target::spec::abi::Abi;
 use rustc_trait_selection::traits::error_reporting::TypeErrCtxtExt;
@@ -1810,29 +1812,32 @@ fn report_bivariance(
     param: &rustc_hir::GenericParam<'_>,
     has_explicit_bounds: bool,
 ) -> ErrorGuaranteed {
-    let span = param.span;
     let param_name = param.name.ident().name;
-    let mut err = error_392(tcx, span, param_name);
 
-    let suggested_marker_id = tcx.lang_items().phantom_data();
-    // Help is available only in presence of lang items.
-    let msg = if let Some(def_id) = suggested_marker_id {
-        format!(
-            "consider removing `{}`, referring to it in a field, or using a marker such as `{}`",
+    let help = if let DefKind::TyAlias = tcx.def_kind(tcx.local_parent(param.def_id)) {
+        errors::UnusedGenericParameterHelp::TyAlias { param_name }
+    } else if let Some(def_id) = tcx.lang_items().phantom_data() {
+        errors::UnusedGenericParameterHelp::Adt {
             param_name,
-            tcx.def_path_str(def_id),
-        )
+            phantom_data: tcx.def_path_str(def_id),
+        }
     } else {
-        format!("consider removing `{param_name}` or referring to it in a field")
+        errors::UnusedGenericParameterHelp::AdtWithoutPhantomData { param_name }
     };
-    err.help(msg);
 
-    if matches!(param.kind, hir::GenericParamKind::Type { .. }) && !has_explicit_bounds {
-        err.help(format!(
-            "if you intended `{param_name}` to be a const parameter, use `const {param_name}: usize` instead"
-        ));
-    }
-    err.emit()
+    let const_param_help =
+        if let hir::GenericParamKind::Type { .. } = param.kind && !has_explicit_bounds {
+            Some(())
+        } else {
+            None
+        };
+
+    tcx.sess.emit_err(errors::UnusedGenericParameter {
+        span: param.span,
+        param_name,
+        help,
+        const_param_help,
+    })
 }
 
 impl<'tcx> WfCheckingCtxt<'_, 'tcx> {
@@ -1891,16 +1896,6 @@ fn check_mod_type_wf(tcx: TyCtxt<'_>, module: LocalModDefId) {
     items.par_impl_items(|item| tcx.ensure().check_well_formed(item.owner_id));
     items.par_trait_items(|item| tcx.ensure().check_well_formed(item.owner_id));
     items.par_foreign_items(|item| tcx.ensure().check_well_formed(item.owner_id));
-}
-
-fn error_392(
-    tcx: TyCtxt<'_>,
-    span: Span,
-    param_name: Symbol,
-) -> DiagnosticBuilder<'_, ErrorGuaranteed> {
-    let mut err = struct_span_err!(tcx.sess, span, E0392, "parameter `{param_name}` is never used");
-    err.span_label(span, "unused parameter");
-    err
 }
 
 pub fn provide(providers: &mut Providers) {

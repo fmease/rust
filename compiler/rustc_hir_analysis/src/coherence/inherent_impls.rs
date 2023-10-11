@@ -150,8 +150,14 @@ impl<'tcx> InherentCollect<'tcx> {
             | ty::Never
             | ty::FnPtr(_)
             | ty::Tuple(..) => self.check_primitive_impl(id, self_ty),
-            ty::Alias(..) | ty::Param(_) => {
+            ty::Alias(ty::Projection | ty::Inherent | ty::Opaque, _) | ty::Param(_) => {
                 self.tcx.sess.emit_err(errors::InherentNominal { span: item_span });
+            }
+            // FIXME: this isn't correct!!!! @Temporary
+            ty::Alias(ty::Weak, data) => {
+                // @Task check args! (I think)
+
+                self.check_def_id(id, self_ty, data.def_id);
             }
             ty::FnDef(..)
             | ty::Closure(..)

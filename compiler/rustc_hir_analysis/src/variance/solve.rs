@@ -5,7 +5,8 @@
 //! optimal solution to the constraints. The final variance for each
 //! inferred is then written into the `variance_map` in the tcx.
 
-use rustc_hir::def_id::DefIdMap;
+use rustc_hir::def::DefKind;
+use rustc_hir::def_id::{DefId, DefIdMap};
 use rustc_middle::ty;
 
 use super::constraints::*;
@@ -72,19 +73,28 @@ impl<'a, 'tcx> SolveContext<'a, 'tcx> {
         }
     }
 
-    fn enforce_const_invariance(&self, generics: &ty::Generics, variances: &mut [ty::Variance]) {
+    fn enforce_const_invariance(
+        &self,
+        def_id: DefId,
+        generics: &ty::Generics,
+        variances: &mut [ty::Variance],
+    ) {
         let tcx = self.terms_cx.tcx;
+        let is_type_alias = matches!(tcx.def_kind(def_id), DefKind::TyAlias);
 
         // Make all const parameters invariant.
         for param in generics.params.iter() {
             if let ty::GenericParamDefKind::Const { .. } = param.kind {
-                variances[param.index as usize] = ty::Invariant;
+                let variance = &mut variances[param.index as usize];
+                if !is_type_alias || *variance != ty::Bivariant {
+                    *variance = ty::Invariant;
+                }
             }
         }
 
         // Make all the const parameters in the parent invariant (recursively).
         if let Some(def_id) = generics.parent {
-            self.enforce_const_invariance(tcx.generics_of(def_id), variances);
+            self.enforce_const_invariance(def_id, tcx.generics_of(def_id), variances);
         }
     }
 
@@ -100,7 +110,7 @@ impl<'a, 'tcx> SolveContext<'a, 'tcx> {
                 let variances = tcx.arena.alloc_slice(&solutions[start..(start + count)]);
 
                 // Const parameters are always invariant.
-                self.enforce_const_invariance(generics, variances);
+                self.enforce_const_invariance(def_id.to_def_id(), generics, variances);
 
                 // Functions are permitted to have unused generic parameters: make those invariant.
                 if let ty::FnDef(..) = tcx.type_of(def_id).instantiate_identity().kind() {

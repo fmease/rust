@@ -1149,3 +1149,26 @@ pub struct ImplForTyRequires {
     pub trait_name: String,
     pub ty: String,
 }
+
+#[derive(Diagnostic)]
+#[diag(hir_analysis_unused_generic_parameter, code = "E0392")]
+pub(crate) struct UnusedGenericParameter {
+    #[primary_span]
+    #[label]
+    pub span: Span,
+    pub param_name: Symbol,
+    #[subdiagnostic]
+    pub help: UnusedGenericParameterHelp,
+    #[help(hir_analysis_const_param_help)]
+    pub const_param_help: Option<()>,
+}
+
+#[derive(Subdiagnostic)]
+pub(crate) enum UnusedGenericParameterHelp {
+    #[help(hir_analysis_unused_generic_parameter_adt_help)]
+    Adt { param_name: Symbol, phantom_data: String },
+    #[help(hir_analysis_unused_generic_parameter_adt_without_phantom_data_help)]
+    AdtWithoutPhantomData { param_name: Symbol },
+    #[help(hir_analysis_unused_generic_parameter_ty_alias_help)]
+    TyAlias { param_name: Symbol },
+}

@@ -59,9 +59,13 @@ struct ParameterCollector {
 impl<'tcx> TypeVisitor<TyCtxt<'tcx>> for ParameterCollector {
     fn visit_ty(&mut self, t: Ty<'tcx>) -> ControlFlow<Self::BreakTy> {
         match *t.kind() {
-            ty::Alias(..) if !self.include_nonconstraining => {
+            ty::Alias(ty::Projection | ty::Inherent | ty::Opaque, _) if !self.include_nonconstraining => {
                 // projections are not injective
                 return ControlFlow::Continue(());
+            }
+            // FIXME: is include_nonconstraining relevant here?
+            ty::Alias(ty::Weak, data) => {
+                data.args.visit_with(self);
             }
             ty::Param(data) => {
                 self.parameters.push(Parameter::from(data));
