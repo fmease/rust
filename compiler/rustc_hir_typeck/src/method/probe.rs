@@ -689,6 +689,13 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
                     self.assemble_inherent_candidates_for_incoherent_ty(raw_self_ty);
                 }
             }
+            ty::Alias(ty::Weak, data) => {
+                eprintln!("@@@ assemble_probe(Weak)");
+                self.assemble_inherent_impl_candidates_for_type(data.def_id);
+                if self.tcx.has_attr(data.def_id, sym::rustc_has_incoherent_inherent_impls) {
+                    self.assemble_inherent_candidates_for_incoherent_ty(raw_self_ty);
+                }
+            }
             ty::Param(p) => {
                 self.assemble_inherent_candidates_from_param(p);
             }
@@ -1484,6 +1491,9 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         debug!("consider_probe: self_ty={:?} probe={:?}", self_ty, probe);
 
         self.probe(|_| {
+            let InferOk { value: self_ty, obligations: norm_self_obligations } =
+                self.at(&ObligationCause::dummy(), self.param_env).normalize(self_ty);
+
             // First check that the self type can be related.
             let sub_obligations = match self.at(&ObligationCause::dummy(), self.param_env).sup(
                 DefineOpaqueTypes::No,
@@ -1653,7 +1663,7 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
             }
 
             // Evaluate those obligations to see if they might possibly hold.
-            for o in sub_obligations {
+            for o in norm_self_obligations.into_iter().chain(sub_obligations) {
                 let o = self.resolve_vars_if_possible(o);
                 if !self.predicate_may_hold(&o) {
                     result = ProbeResult::NoMatch;

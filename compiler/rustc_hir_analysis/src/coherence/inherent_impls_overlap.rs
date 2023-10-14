@@ -155,13 +155,25 @@ impl<'tcx> InherentOverlapChecker<'tcx> {
         }
     }
 
-    fn check_item(&mut self, id: hir::ItemId) {
-        let def_kind = self.tcx.def_kind(id.owner_id);
-        if !matches!(def_kind, DefKind::Enum | DefKind::Struct | DefKind::Trait | DefKind::Union) {
-            return;
-        }
+    // @Temporary
+    fn inherent_impls_xxx(&self, def_id: DefId) -> Option<&'tcx [DefId]> {
+        let def_id = match self.tcx.def_kind(def_id) {
+            DefKind::Enum | DefKind::Struct | DefKind::Trait | DefKind::Union => def_id,
+            DefKind::TyAlias if self.tcx.type_alias_is_lazy(def_id) => {
+                match self.tcx.type_of(def_id).skip_binder().kind() {
+                    ty::Adt(adt, _) => adt.did(),
+                    // FIXME: AliasA => AliasB => …
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
 
-        let impls = self.tcx.inherent_impls(id.owner_id);
+        Some(self.tcx.inherent_impls(def_id))
+    }
+
+    fn check_item(&mut self, id: hir::ItemId) {
+        let Some(impls) = self.inherent_impls_xxx(id.owner_id.into()) else { return; };
 
         let overlap_mode = OverlapMode::get(self.tcx, id.owner_id.to_def_id());
 
