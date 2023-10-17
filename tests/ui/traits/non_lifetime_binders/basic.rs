@@ -1,3 +1,5 @@
+// compile-flags: -Ztrait-solver=next
+
 // check-pass
 // Basic test that show's we can succesfully typeck a `for<T>` where clause.
 
@@ -6,7 +8,7 @@
 
 trait Trait {}
 
-impl<T: ?Sized> Trait for T {}
+impl<T> Trait for T {}
 
 fn foo()
 where

@@ -322,8 +322,7 @@ impl<'tcx> TyCtxt<'tcx> {
         value: Binder<'tcx, T>,
         delegate: impl BoundVarReplacerDelegate<'tcx>,
     ) -> (T, &'tcx ty::List<ty::Clause<'tcx>>) {
-        let preds = value.skip_binder_predicates();
-        self.replace_escaping_bound_vars_uncached((value.skip_binder(), preds), delegate)
+        self.replace_escaping_bound_vars_uncached(value.skip_binder_with_predicates(), delegate)
     }
 
     /// Replaces any late-bound regions bound in `value` with

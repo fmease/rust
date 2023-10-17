@@ -9,6 +9,7 @@ pub use combine::ObligationEmittingRelation;
 use rustc_data_structures::captures::Captures;
 use rustc_data_structures::undo_log::UndoLogs;
 use rustc_middle::infer::unify_key::{ConstVidKey, EffectVidKey};
+use rustc_span::DUMMY_SP;
 
 use self::opaque_types::OpaqueTypeStorage;
 pub(crate) use self::undo_log::{InferCtxtUndoLogs, Snapshot, UndoLog};
@@ -1468,7 +1469,11 @@ impl<'tcx> InferCtxt<'tcx> {
     where
         T: TypeFoldable<TyCtxt<'tcx>> + Copy,
     {
-        assert_eq!(value.skip_binder_predicates(), ty::List::empty());
+        if !value.skip_binder_with_predicates().1.is_empty() {
+            self.tcx
+                .sess
+                .delay_span_bug(DUMMY_SP, "binder instantiated with infer ignoring predicates");
+        }
 
         if let Some(inner) = value.no_bound_vars() {
             return inner;

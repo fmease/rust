@@ -1,5 +1,5 @@
 warning: the feature `non_lifetime_binders` is incomplete and may not be safe to use and/or cause compiler crashes
-  --> $DIR/drop-impl-pred.rs:6:12
+  --> $DIR/drop-impl-pred.rs:7:12
    |
 LL | #![feature(non_lifetime_binders)]
    |            ^^^^^^^^^^^^^^^^^^^^
@@ -8,13 +8,13 @@ LL | #![feature(non_lifetime_binders)]
    = note: `#[warn(incomplete_features)]` on by default
 
 error[E0367]: `Drop` impl requires `H: Foo` but the struct it is implemented for does not
-  --> $DIR/drop-impl-pred.rs:19:15
+  --> $DIR/drop-impl-pred.rs:20:15
    |
 LL |     for<H> H: Foo,
    |               ^^^
    |
 note: the implementor must specify the same requirement
-  --> $DIR/drop-impl-pred.rs:12:1
+  --> $DIR/drop-impl-pred.rs:13:1
    |
 LL | struct Bar<T>(T) where T: Foo;
    | ^^^^^^^^^^^^^

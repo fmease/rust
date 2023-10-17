@@ -7,12 +7,12 @@ use core::marker::PhantomData;
 
 fn main() {
     test::<MaskedStorage<GenericComp<Pos>>>(make());
-    //~^ ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOk)
-    //~| ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOk)
+    //~^ ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOk)
+    //~| ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOk)
 
     test::<MaskedStorage<GenericComp2<Pos>>>(make());
-    //~^ ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp2<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOkModuloRegions)
-    //~| ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp2<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOkModuloRegions)
+    //~^ ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp2<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOkModuloRegions)
+    //~| ERROR evaluate(Binder { value: TraitPredicate(<MaskedStorage<GenericComp2<Pos>> as std::marker::Sized>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOkModuloRegions)
 }
 
 #[rustc_evaluate_where_clauses]

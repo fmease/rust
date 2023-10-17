@@ -1,3 +1,5 @@
+// compile-flags: -Ztrait-solver=next
+
 #![feature(non_lifetime_binders)]
 //~^ WARN the feature `non_lifetime_binders` is incomplete
 
@@ -17,8 +19,10 @@ impl<T: ?Sized> Bar<T> for () {}
 
 fn main() {
     let x: &dyn Foo = &();
-    //~^ ERROR the trait `Foo` cannot be made into an object
-    //~| ERROR the trait `Foo` cannot be made into an object
+    //~^ ERROR the type `&dyn Foo` is not well-formed
+    //~| ERROR mismatched types
     needs_bar(x);
-    //~^ ERROR the trait `Foo` cannot be made into an object
+    //~^ ERROR the type `&dyn Foo` is not well-formed
+    //~| ERROR the type `dyn Foo` is not well-formed
+    //~| ERROR the trait bound `dyn Foo: Bar<i32>` is not satisfied
 }

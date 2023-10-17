@@ -77,7 +77,9 @@ impl<'tcx> LateLintPass<'tcx> for OpaqueHiddenInferredBound {
         for (pred, pred_span) in
             cx.tcx.explicit_item_bounds(def_id).instantiate_identity_iter_copied()
         {
-            let predicate = infcx.instantiate_binder_with_placeholders(pred.kind());
+            // FIXME(non_lifetime_binders): We could assume the predicates in this binder.
+            let (predicate, _) =
+                infcx.instantiate_binder_and_assumptions_with_placeholders(pred.kind());
             let ty::ClauseKind::Projection(proj) = predicate else {
                 continue;
             };

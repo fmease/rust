@@ -1,5 +1,5 @@
 warning: the feature `non_lifetime_binders` is incomplete and may not be safe to use and/or cause compiler crashes
-  --> $DIR/foreach-partial-eq.rs:1:12
+  --> $DIR/foreach-partial-eq.rs:3:12
    |
 LL | #![feature(non_lifetime_binders)]
    |            ^^^^^^^^^^^^^^^^^^^^
@@ -8,14 +8,14 @@ LL | #![feature(non_lifetime_binders)]
    = note: `#[warn(incomplete_features)]` on by default
 
 error[E0277]: can't compare `T` with `T`
-  --> $DIR/foreach-partial-eq.rs:10:5
+  --> $DIR/foreach-partial-eq.rs:12:5
    |
 LL |     auto_trait();
    |     ^^^^^^^^^^ no implementation for `T < T` and `T > T`
    |
    = help: the trait `PartialOrd` is not implemented for `T`
 note: required by a bound in `auto_trait`
-  --> $DIR/foreach-partial-eq.rs:6:27
+  --> $DIR/foreach-partial-eq.rs:8:27
    |
 LL | fn auto_trait()
    |    ---------- required by a bound in this function

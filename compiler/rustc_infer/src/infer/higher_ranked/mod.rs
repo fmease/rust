@@ -7,6 +7,7 @@ use crate::infer::CombinedSnapshot;
 use rustc_middle::ty::fold::FnMutDelegate;
 use rustc_middle::ty::relate::{Relate, RelateResult, TypeRelation};
 use rustc_middle::ty::{self, Binder, Ty, TyCtxt, TypeFoldable};
+use rustc_span::DUMMY_SP;
 
 impl<'a, 'tcx> CombineFields<'a, 'tcx> {
     /// Checks whether `for<..> sub <: for<..> sup` holds.
@@ -74,7 +75,12 @@ impl<'tcx> InferCtxt<'tcx> {
     where
         T: TypeFoldable<TyCtxt<'tcx>> + Copy,
     {
-        assert_eq!(binder.skip_binder_predicates(), ty::List::empty());
+        if !binder.skip_binder_with_predicates().1.is_empty() {
+            self.tcx.sess.delay_span_bug(
+                DUMMY_SP,
+                "binder instantiated with placeholders ignoring predicates",
+            );
+        }
 
         if let Some(inner) = binder.no_bound_vars() {
             return inner;

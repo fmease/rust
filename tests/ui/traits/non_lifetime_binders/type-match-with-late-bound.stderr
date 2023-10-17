@@ -1,5 +1,5 @@
 warning: the feature `non_lifetime_binders` is incomplete and may not be safe to use and/or cause compiler crashes
-  --> $DIR/type-match-with-late-bound.rs:6:12
+  --> $DIR/type-match-with-late-bound.rs:7:12
    |
 LL | #![feature(non_lifetime_binders)]
    |            ^^^^^^^^^^^^^^^^^^^^

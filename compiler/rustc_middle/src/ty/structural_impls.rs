@@ -532,7 +532,9 @@ impl<'tcx, T: TypeFoldable<TyCtxt<'tcx>>> TypeSuperFoldable<TyCtxt<'tcx>> for ty
         self,
         folder: &mut F,
     ) -> Result<Self, F::Error> {
-        self.try_map_bound(|ty| ty.try_fold_with(folder))
+        let bound_vars = self.bound_vars();
+        let (value, bound_predicates) = self.skip_binder_with_predicates().try_fold_with(folder)?;
+        Ok(ty::Binder::bind_with_vars_and_predicates(value, bound_vars, bound_predicates))
     }
 }
 
@@ -543,7 +545,9 @@ impl<'tcx, T: TypeVisitable<TyCtxt<'tcx>>> TypeSuperVisitable<TyCtxt<'tcx>>
         &self,
         visitor: &mut V,
     ) -> ControlFlow<V::BreakTy> {
-        self.as_ref().skip_binder().visit_with(visitor)
+        let (val, predicates) = self.as_ref().skip_binder_with_predicates();
+        val.visit_with(visitor)?;
+        predicates.visit_with(visitor)
     }
 }
 

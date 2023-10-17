@@ -1,5 +1,5 @@
 warning: the feature `non_lifetime_binders` is incomplete and may not be safe to use and/or cause compiler crashes
-  --> $DIR/supertrait-object-safety.rs:1:12
+  --> $DIR/supertrait-object-safety.rs:3:12
    |
 LL | #![feature(non_lifetime_binders)]
    |            ^^^^^^^^^^^^^^^^^^^^
@@ -7,49 +7,51 @@ LL | #![feature(non_lifetime_binders)]
    = note: see issue #108185 <https://github.com/rust-lang/rust/issues/108185> for more information
    = note: `#[warn(incomplete_features)]` on by default
 
-error[E0038]: the trait `Foo` cannot be made into an object
-  --> $DIR/supertrait-object-safety.rs:19:23
+error[E0308]: mismatched types
+  --> $DIR/supertrait-object-safety.rs:21:23
    |
 LL |     let x: &dyn Foo = &();
-   |                       ^^^ `Foo` cannot be made into an object
+   |            --------   ^^^ expected `&dyn Foo`, found `&()`
+   |            |
+   |            expected due to this
    |
-note: for a trait to be "object safe" it needs to allow building a vtable to allow the call to be resolvable dynamically; for more information visit <https://doc.rust-lang.org/reference/items/traits.html#object-safety>
-  --> $DIR/supertrait-object-safety.rs:4:12
-   |
-LL | trait Foo: for<T> Bar<T> {}
-   |       ---  ^^^^^^^^^^^^^ ...because where clause cannot reference non-lifetime `for<...>` variables
-   |       |
-   |       this trait cannot be made into an object...
-   = note: required for the cast from `&()` to `&dyn Foo`
+   = note: expected reference `&dyn Foo`
+              found reference `&()`
 
-error[E0038]: the trait `Foo` cannot be made into an object
-  --> $DIR/supertrait-object-safety.rs:19:12
+error: the type `&dyn Foo` is not well-formed
+  --> $DIR/supertrait-object-safety.rs:21:12
    |
 LL |     let x: &dyn Foo = &();
-   |            ^^^^^^^^ `Foo` cannot be made into an object
-   |
-note: for a trait to be "object safe" it needs to allow building a vtable to allow the call to be resolvable dynamically; for more information visit <https://doc.rust-lang.org/reference/items/traits.html#object-safety>
-  --> $DIR/supertrait-object-safety.rs:4:12
-   |
-LL | trait Foo: for<T> Bar<T> {}
-   |       ---  ^^^^^^^^^^^^^ ...because where clause cannot reference non-lifetime `for<...>` variables
-   |       |
-   |       this trait cannot be made into an object...
+   |            ^^^^^^^^
 
-error[E0038]: the trait `Foo` cannot be made into an object
-  --> $DIR/supertrait-object-safety.rs:22:5
+error[E0277]: the trait bound `dyn Foo: Bar<i32>` is not satisfied
+  --> $DIR/supertrait-object-safety.rs:24:15
    |
 LL |     needs_bar(x);
-   |     ^^^^^^^^^ `Foo` cannot be made into an object
+   |     --------- ^ the trait `Bar<i32>` is not implemented for `dyn Foo`
+   |     |
+   |     required by a bound introduced by this call
    |
-note: for a trait to be "object safe" it needs to allow building a vtable to allow the call to be resolvable dynamically; for more information visit <https://doc.rust-lang.org/reference/items/traits.html#object-safety>
-  --> $DIR/supertrait-object-safety.rs:4:12
+   = help: the trait `Bar<T>` is implemented for `()`
+note: required by a bound in `needs_bar`
+  --> $DIR/supertrait-object-safety.rs:12:24
    |
-LL | trait Foo: for<T> Bar<T> {}
-   |       ---  ^^^^^^^^^^^^^ ...because where clause cannot reference non-lifetime `for<...>` variables
-   |       |
-   |       this trait cannot be made into an object...
+LL | fn needs_bar(x: &(impl Bar<i32> + ?Sized)) {
+   |                        ^^^^^^^^ required by this bound in `needs_bar`
 
-error: aborting due to 3 previous errors; 1 warning emitted
+error: the type `dyn Foo` is not well-formed
+  --> $DIR/supertrait-object-safety.rs:24:5
+   |
+LL |     needs_bar(x);
+   |     ^^^^^^^^^
 
-For more information about this error, try `rustc --explain E0038`.
+error: the type `&dyn Foo` is not well-formed
+  --> $DIR/supertrait-object-safety.rs:24:15
+   |
+LL |     needs_bar(x);
+   |               ^
+
+error: aborting due to 5 previous errors; 1 warning emitted
+
+Some errors have detailed explanations: E0277, E0308.
+For more information about an error, try `rustc --explain E0277`.

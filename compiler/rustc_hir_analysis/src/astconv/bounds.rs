@@ -126,8 +126,17 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                             }
                             _ => bug!(),
                         };
-                        let pred = ty::ClauseKind::RegionOutlives(ty::OutlivesPredicate(r1, r2))
-                            .to_predicate(self.tcx());
+                        let pred = ty::ClauseKind::RegionOutlives(ty::OutlivesPredicate(r1, r2));
+                        // This predicate may have escaping bound vars, e.g. if
+                        // we have `for<'a: 'a> ..`. Since outlives predicates
+                        // don't implicitly have a binder added for them in
+                        // resolve_bound_vars, we need to explicitly shift the
+                        // vars in once here.
+                        let pred = ty::Binder::bind_with_vars(
+                            ty::fold::shift_vars(self.tcx(), pred, 1),
+                            ty::List::empty(),
+                        )
+                        .to_predicate(self.tcx());
                         (pred, span)
                     }))
                 }
@@ -715,7 +724,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                         ast_bounds.iter(),
                         bounds,
                         projection_ty.bound_vars(),
-                        projection_ty.skip_binder_predicates(),
+                        projection_ty.skip_binder_with_predicates().1,
                         only_self_bounds,
                     );
                 }

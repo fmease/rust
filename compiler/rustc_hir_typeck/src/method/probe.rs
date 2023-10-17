@@ -851,7 +851,8 @@ impl<'a, 'tcx> ProbeContext<'a, 'tcx> {
         });
 
         self.elaborate_bounds(bounds, |this, poly_trait_ref, item| {
-            let trait_ref = this.instantiate_binder_with_fresh_vars(
+            // FIXME(non_lifetime_binders): We could check these predicates hold.
+            let (trait_ref, _) = this.instantiate_binder_and_predicates_with_fresh_vars(
                 this.span,
                 infer::LateBoundRegionConversionTime::FnCall,
                 poly_trait_ref,

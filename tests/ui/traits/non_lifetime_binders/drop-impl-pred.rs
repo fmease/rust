@@ -1,3 +1,4 @@
+// compile-flags: -Ztrait-solver=next
 // revisions: no yes
 //[yes] check-pass
 

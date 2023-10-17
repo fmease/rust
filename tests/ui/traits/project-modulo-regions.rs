@@ -48,8 +48,8 @@ fn test(val: MyStruct) where Helper: HelperTrait  {
 
 fn foo(val: MyStruct) {
     test(val);
-    //[with_clause]~^     ERROR evaluate(Binder { value: TraitPredicate(<Helper as HelperTrait>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOkModuloRegions)
-    //[without_clause]~^^ ERROR evaluate(Binder { value: TraitPredicate(<Helper as HelperTrait>, polarity:Positive), bound_vars: [] }) = Ok(EvaluatedToOk)
+    //[with_clause]~^     ERROR evaluate(Binder { value: TraitPredicate(<Helper as HelperTrait>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOkModuloRegions)
+    //[without_clause]~^^ ERROR evaluate(Binder { value: TraitPredicate(<Helper as HelperTrait>, polarity:Positive), bound_vars: [], bound_predicates: [] }) = Ok(EvaluatedToOk)
 }
 
 fn main() {}

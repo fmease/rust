@@ -1,3 +1,4 @@
+// compile-flags: -Ztrait-solver=next
 // edition:2021
 // check-pass
 
