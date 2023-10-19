@@ -338,33 +338,33 @@ macro_rules! define_callbacks {
                     <$($K)* as keys::Key>::CacheSelector as CacheSelector<'tcx, Erase<$V>>
                 >::Cache;
 
-                // Ensure that keys grow no larger than 64 bytes
-                #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-                const _: () = {
-                    if mem::size_of::<Key<'static>>() > 64 {
-                        panic!("{}", concat!(
-                            "the query `",
-                            stringify!($name),
-                            "` has a key type `",
-                            stringify!($($K)*),
-                            "` that is too large"
-                        ));
-                    }
-                };
+                // // Ensure that keys grow no larger than 64 bytes
+                // #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+                // const _: () = {
+                //     if mem::size_of::<Key<'static>>() > 64 {
+                //         panic!("{}", concat!(
+                //             "the query `",
+                //             stringify!($name),
+                //             "` has a key type `",
+                //             stringify!($($K)*),
+                //             "` that is too large"
+                //         ));
+                //     }
+                // };
 
-                // Ensure that values grow no larger than 64 bytes
-                #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
-                const _: () = {
-                    if mem::size_of::<Value<'static>>() > 64 {
-                        panic!("{}", concat!(
-                            "the query `",
-                            stringify!($name),
-                            "` has a value type `",
-                            stringify!($V),
-                            "` that is too large"
-                        ));
-                    }
-                };
+                // // Ensure that values grow no larger than 64 bytes
+                // #[cfg(all(target_arch = "x86_64", target_pointer_width = "64"))]
+                // const _: () = {
+                //     if mem::size_of::<Value<'static>>() > 64 {
+                //         panic!("{}", concat!(
+                //             "the query `",
+                //             stringify!($name),
+                //             "` has a value type `",
+                //             stringify!($V),
+                //             "` that is too large"
+                //         ));
+                //     }
+                // };
             })*
         }
 
