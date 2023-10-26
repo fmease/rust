@@ -9,7 +9,6 @@ pub use combine::ObligationEmittingRelation;
 use rustc_data_structures::captures::Captures;
 use rustc_data_structures::undo_log::UndoLogs;
 use rustc_middle::infer::unify_key::{ConstVidKey, EffectVidKey};
-use rustc_span::DUMMY_SP;
 
 use self::opaque_types::OpaqueTypeStorage;
 pub(crate) use self::undo_log::{InferCtxtUndoLogs, Snapshot, UndoLog};

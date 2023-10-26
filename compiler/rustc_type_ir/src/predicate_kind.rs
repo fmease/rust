@@ -80,7 +80,65 @@ impl<I: Interner> PartialEq for ClauseKind<I> {
     }
 }
 
+impl<I: Interner> PartialOrd for ClauseKind<I>
+where
+    I::Ty: PartialOrd,
+    I::Const: PartialOrd,
+    I::GenericArg: PartialOrd,
+    I::TraitPredicate: PartialOrd,
+    I::ProjectionPredicate: PartialOrd,
+    I::TypeOutlivesPredicate: PartialOrd,
+    I::RegionOutlivesPredicate: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Trait(l0), Self::Trait(r0)) => l0.partial_cmp(r0),
+            (Self::RegionOutlives(l0), Self::RegionOutlives(r0)) => l0.partial_cmp(r0),
+            (Self::TypeOutlives(l0), Self::TypeOutlives(r0)) => l0.partial_cmp(r0),
+            (Self::Projection(l0), Self::Projection(r0)) => l0.partial_cmp(r0),
+            (Self::ConstArgHasType(l0, l1), Self::ConstArgHasType(r0, r1)) => {
+                let o = l0.partial_cmp(r0)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                l1.partial_cmp(r1)
+            }
+            (Self::WellFormed(l0), Self::WellFormed(r0)) => l0.partial_cmp(r0),
+            (Self::ConstEvaluatable(l0), Self::ConstEvaluatable(r0)) => l0.partial_cmp(r0),
+            _ => Some(clause_kind_discriminant(self).cmp(&clause_kind_discriminant(other))),
+        }
+    }
+}
+
+impl<I: Interner> Ord for ClauseKind<I>
+where
+    I::Ty: Ord,
+    I::Const: Ord,
+    I::GenericArg: Ord,
+    I::TraitPredicate: Ord,
+    I::ProjectionPredicate: Ord,
+    I::TypeOutlivesPredicate: Ord,
+    I::RegionOutlivesPredicate: Ord,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Trait(l0), Self::Trait(r0)) => l0.cmp(r0),
+            (Self::RegionOutlives(l0), Self::RegionOutlives(r0)) => l0.cmp(r0),
+            (Self::TypeOutlives(l0), Self::TypeOutlives(r0)) => l0.cmp(r0),
+            (Self::Projection(l0), Self::Projection(r0)) => l0.cmp(r0),
+            (Self::ConstArgHasType(l0, l1), Self::ConstArgHasType(r0, r1)) => {
+                l0.cmp(r0).then_with(|| l1.cmp(r1))
+            }
+            (Self::WellFormed(l0), Self::WellFormed(r0)) => l0.cmp(r0),
+            (Self::ConstEvaluatable(l0), Self::ConstEvaluatable(r0)) => l0.cmp(r0),
+            _ => clause_kind_discriminant(self).cmp(&clause_kind_discriminant(other)),
+        }
+    }
+}
+
 impl<I: Interner> Eq for ClauseKind<I> {}
+
+// FIXME: Ord for ClauseKind
 
 fn clause_kind_discriminant<I: Interner>(value: &ClauseKind<I>) -> usize {
     match value {
@@ -344,6 +402,88 @@ impl<I: Interner> PartialEq for PredicateKind<I> {
 }
 
 impl<I: Interner> Eq for PredicateKind<I> {}
+
+impl<I: Interner> Ord for PredicateKind<I>
+where
+    I::DefId: Ord,
+    I::Const: Ord,
+    I::GenericArgs: Ord,
+    I::Term: Ord,
+    I::CoercePredicate: Ord,
+    I::SubtypePredicate: Ord,
+    I::ClosureKind: Ord,
+    ClauseKind<I>: Ord,
+{
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Self::Clause(l0), Self::Clause(r0)) => l0.cmp(r0),
+            (Self::ObjectSafe(l0), Self::ObjectSafe(r0)) => l0.cmp(r0),
+            (Self::ClosureKind(l0, l1, l2), Self::ClosureKind(r0, r1, r2)) => {
+                l0.cmp(r0).then_with(|| l1.cmp(r1).then_with(|| l2.cmp(r2)))
+            }
+            (Self::Subtype(l0), Self::Subtype(r0)) => l0.cmp(r0),
+            (Self::Coerce(l0), Self::Coerce(r0)) => l0.cmp(r0),
+            (Self::ConstEquate(l0, l1), Self::ConstEquate(r0, r1)) => {
+                l0.cmp(r0).then_with(|| l1.cmp(r1))
+            }
+            (Self::AliasRelate(l0, l1, l2), Self::AliasRelate(r0, r1, r2)) => {
+                l0.cmp(r0).then_with(|| l1.cmp(r1).then_with(|| l2.cmp(r2)))
+            }
+            _ => predicate_kind_discriminant(self).cmp(&predicate_kind_discriminant(other)),
+        }
+    }
+}
+
+impl<I: Interner> PartialOrd for PredicateKind<I>
+where
+    I::DefId: PartialOrd,
+    I::Const: PartialOrd,
+    I::GenericArgs: PartialOrd,
+    I::Term: PartialOrd,
+    I::CoercePredicate: PartialOrd,
+    I::SubtypePredicate: PartialOrd,
+    I::ClosureKind: PartialOrd,
+    ClauseKind<I>: PartialOrd,
+{
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        match (self, other) {
+            (Self::Clause(l0), Self::Clause(r0)) => l0.partial_cmp(r0),
+            (Self::ObjectSafe(l0), Self::ObjectSafe(r0)) => l0.partial_cmp(r0),
+            (Self::ClosureKind(l0, l1, l2), Self::ClosureKind(r0, r1, r2)) => {
+                let o = l0.partial_cmp(r0)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                let o = l1.partial_cmp(r1)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                l2.partial_cmp(r2)
+            }
+            (Self::Subtype(l0), Self::Subtype(r0)) => l0.partial_cmp(r0),
+            (Self::Coerce(l0), Self::Coerce(r0)) => l0.partial_cmp(r0),
+            (Self::ConstEquate(l0, l1), Self::ConstEquate(r0, r1)) => {
+                let o = l0.partial_cmp(r0)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                l1.partial_cmp(r1)
+            }
+            (Self::AliasRelate(l0, l1, l2), Self::AliasRelate(r0, r1, r2)) => {
+                let o = l0.partial_cmp(r0)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                let o = l1.partial_cmp(r1)?;
+                if !o.is_eq() {
+                    return Some(o);
+                }
+                l2.partial_cmp(r2)
+            }
+            _ => Some(predicate_kind_discriminant(self).cmp(&predicate_kind_discriminant(other))),
+        }
+    }
+}
 
 fn predicate_kind_discriminant<I: Interner>(value: &PredicateKind<I>) -> usize {
     match value {
