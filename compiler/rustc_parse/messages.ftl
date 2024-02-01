@@ -780,11 +780,11 @@ parse_unexpected_expr_in_pat =
         [true] a method call
        *[false] an expression
     }
-
     .label = {$is_method_call ->
         [true] method calls
        *[false] arbitrary expressions
     } are not allowed in patterns
+    .help = extract the expression to a `const` and refer to that
 
 parse_unexpected_if_with_if = unexpected `if` in the condition expression
     .suggestion = remove the `if`

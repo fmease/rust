@@ -358,21 +358,26 @@ impl<'a> Parser<'a> {
         }
 
         // Check for `.hello()`, but allow `.Hello()` to be recovered as `, Hello()` in `parse_seq_to_before_tokens()`.
-        let has_trailing_method = self.check_noexpect(&token::Dot)
-            && self.look_ahead(1, |tok| {
-                tok.ident()
-                    .and_then(|(ident, _)| ident.name.as_str().chars().next())
-                    .is_some_and(char::is_lowercase)
+        // FIXME(fmease): Differentiate between field access & method call.
+        let has_trailing_method = if self.check_noexpect(&token::Dot) {
+            self.look_ahead(1, |tok| {
+                self.token.span.hi() == tok.span.lo()
+                    // FIXME: what about f.0.0? FIXME: don't allow 1e4
+                    && (tok.is_ident() || tok.is_numeric_lit())
             })
-            && self.look_ahead(2, |tok| tok.kind == token::OpenDelim(Delimiter::Parenthesis));
+        } else {
+            false
+        };
 
         // Check for operators.
         // `|` is excluded as it is used in pattern alternatives and lambdas,
         // `?` is included for error propagation,
+        // `as` is included for cast expressions,
         // `[` is included for indexing operations,
         // `[]` is excluded as `a[]` isn't an expression and should be recovered as `a, []` (cf. `tests/ui/parser/pat-lt-bracket-7.rs`)
         let has_trailing_operator = matches!(self.token.kind, token::BinOp(op) if op != BinOpToken::Or)
             || self.token.kind == token::Question
+            || self.token.is_keyword(kw::As)
             || (self.token.kind == token::OpenDelim(Delimiter::Bracket)
                 && self.look_ahead(1, |tok| tok.kind != token::CloseDelim(Delimiter::Bracket)));
 
@@ -414,6 +419,8 @@ impl<'a> Parser<'a> {
                 // Check that `parse_expr_assoc_with` didn't eat a rhs.
                 let is_method_call = has_trailing_method && non_assoc_span == expr.span;
 
+                // FIXME: If feature `inline_const_pat` is enabled, provide a
+                // structured suggestion: `const { $expr }`.
                 return Some(self.dcx().emit_err(UnexpectedExpressionInPattern {
                     span: expr.span,
                     is_bound,

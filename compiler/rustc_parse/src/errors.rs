@@ -2420,6 +2420,7 @@ pub(crate) struct ExpectedCommaAfterPatternField {
 pub(crate) struct UnexpectedExpressionInPattern {
     #[primary_span]
     #[label]
+    #[help]
     pub span: Span,
     /// Was a `RangePatternBound` expected?
     pub is_bound: bool,
