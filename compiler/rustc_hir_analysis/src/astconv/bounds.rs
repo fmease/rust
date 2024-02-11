@@ -16,7 +16,8 @@ use crate::bounds::Bounds;
 use crate::errors;
 
 impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
-    /// Sets `implicitly_sized` to true on `Bounds` if necessary
+    /// Adds a `Sized` bound to the list of `bounds` unless the HIR bounds contain any of
+    /// `Sized`, `?Sized` or `!Sized`.
     pub(crate) fn add_implicitly_sized(
         &self,
         bounds: &mut Bounds<'tcx>,
@@ -100,8 +101,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
         }
     }
 
-    /// This helper takes a *converted* parameter type (`param_ty`)
-    /// and an *unconverted* list of bounds:
+    /// Lower bounds into `bounds`.
     ///
     /// ```text
     /// fn foo<T: Debug>
@@ -109,8 +109,6 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     ///        |
     ///        `param_ty`, in ty form
     /// ```
-    ///
-    /// It adds these `ast_bounds` into the `bounds` structure.
     ///
     /// **A note on binders:** there is an implied binder around
     /// `param_ty` and `ast_bounds`. See `instantiate_poly_trait_ref`

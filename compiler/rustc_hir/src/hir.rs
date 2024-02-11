@@ -1845,7 +1845,7 @@ pub enum ExprKind<'hir> {
     /// Wraps the expression in a terminating scope.
     /// This makes it semantically equivalent to `{ let _t = expr; _t }`.
     ///
-    /// This construct only exists to tweak the drop order in HIR lowering.
+    /// This construct only exists to tweak the drop order in AST lowering.
     /// An example of that is the desugaring of `for` loops.
     DropTemps(&'hir Expr<'hir>),
     /// A `let $pat = $expr` expression.
@@ -2278,7 +2278,7 @@ pub enum ImplItemKind<'hir> {
 /// Bind a type to an associated type (i.e., `A = Foo`).
 ///
 /// Bindings like `A: Debug` are represented as a special type `A =
-/// $::Debug` that is understood by the astconv code.
+/// $::Debug` that is understood by the HIR/ty lowering code.
 ///
 /// FIXME(alexreg): why have a separate type for the binding case,
 /// wouldn't it be better to make the `ty` field an enum like the

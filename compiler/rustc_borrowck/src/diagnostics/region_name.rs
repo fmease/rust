@@ -626,7 +626,7 @@ impl<'tcx> MirBorrowckCtxt<'_, 'tcx> {
                     | GenericArgKind::Const(_),
                     _,
                 ) => {
-                    // HIR lowering sometimes doesn't catch this in erroneous
+                    // HIR/ty lowering sometimes doesn't catch this in erroneous
                     // programs, so we need to use span_delayed_bug here. See #82126.
                     self.dcx().span_delayed_bug(
                         hir_arg.span(),

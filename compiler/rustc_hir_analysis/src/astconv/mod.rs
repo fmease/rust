@@ -1,6 +1,9 @@
-//! Conversion from AST representation of types to the `ty.rs` representation.
-//! The main routine here is `ast_ty_to_ty()`; each use is parameterized by an
-//! instance of `AstConv`.
+//! HIR/ty lowering: Lowers type-system entities from HIR to `rustc_middle::ty` representation.
+//!
+//! Not to be confused with *AST lowering* which lowers AST constructs to HIR ones.
+//!
+//! The main routine here is `<dyn HirTyLowerer>::lower_ty()`. The other routines
+//! are defined on `dyn HirTyLowerer` (see [`HirTyLowerer`]).
 
 mod bounds;
 mod errors;
@@ -69,6 +72,9 @@ pub enum PredicateFilter {
     SelfAndAssociatedTypeBounds,
 }
 
+/// A context which can lower type-system entities from [HIR][hir] to [`rustc_middle::ty`] representation.
+///
+/// This used to be called `AstConv`.
 pub trait HirTyLowerer<'tcx> {
     fn tcx(&self) -> TyCtxt<'tcx>;
 
@@ -127,6 +133,7 @@ pub trait HirTyLowerer<'tcx> {
     ) -> Ty<'tcx>;
 
     /// Returns `AdtDef` if `ty` is an ADT.
+    ///
     /// Note that `ty` might be a projection type that needs normalization.
     /// This used to get the enum variants in scope of the type.
     /// For example, `Self::A` could refer to an associated type
@@ -214,6 +221,7 @@ pub struct GenericArgCountResult {
     pub correct: Result<(), GenericArgCountMismatch>,
 }
 
+/// A context which can lower HIR's [`GenericArg`] to `rustc_middle`'s [`ty::GenericArg`].
 pub trait GenericArgsLowerer<'a, 'tcx> {
     fn args_for_def_id(&mut self, def_id: DefId) -> (Option<&'a GenericArgs<'tcx>>, bool);
 
@@ -309,7 +317,6 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         if let Some(b) = item_segment.args().bindings.first() {
             prohibit_assoc_ty_binding(self.tcx(), b.span, Some((item_segment, span)));
         }
-
         args
     }
 
@@ -593,7 +600,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         &self,
         generic_args: &'a hir::GenericArgs<'tcx>,
     ) -> Vec<LoweredBinding<'a, 'tcx>> {
-        // Convert associated-type bindings or constraints into a separate vector.
+        // Lower associated-type bindings or constraints into a separate vector.
         // Example: Given this:
         //
         //     T: Iterator<Item = u32>
@@ -655,11 +662,9 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
             None,
             ty::BoundConstness::NotConst,
         );
-
         if let Some(b) = item_segment.args().bindings.first() {
             prohibit_assoc_ty_binding(self.tcx(), b.span, Some((item_segment, span)));
         }
-
         args
     }
 
@@ -786,7 +791,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         self_ty: Ty<'tcx>,
         trait_segment: &hir::PathSegment<'tcx>,
         is_impl: bool,
-        // FIXME(effects) move all host param things in astconv to hir lowering
+        // FIXME(effects): Move all host param things in HIR/ty lowering to AST lowering.
         constness: ty::BoundConstness,
     ) -> ty::TraitRef<'tcx> {
         let (generic_args, _) = self.lower_args_for_trait_ref(
@@ -973,10 +978,11 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         reported
     }
 
-    // Search for a bound on a type parameter which includes the associated item
-    // given by `assoc_name`. `ty_param_def_id` is the `DefId` of the type parameter
-    // This function will fail if there are no suitable bounds or there is
-    // any ambiguity.
+    /// Search for a bound on a type parameter which includes the associated item given by `assoc_name`.
+    ///
+    /// `ty_param_def_id` is the `DefId` of the type parameter.
+    /// This function will fail if there are no suitable bounds or there is any ambiguity.
+    #[instrument(level = "debug", skip(self), ret)]
     fn find_bound_for_assoc_item(
         &self,
         ty_param_def_id: LocalDefId,
@@ -1015,8 +1021,8 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         )
     }
 
-    // Checks that `bounds` contains exactly one element and reports appropriate
-    // errors otherwise.
+    // FIXME(fmease): This also *resolves* the bound. Update docs!
+    /// Checks that `bounds` contains exactly one element and reports appropriate errors otherwise.
     #[instrument(level = "debug", skip(self, all_candidates, ty_param_name, binding), ret)]
     fn one_bound_for_assoc_item<I>(
         &self,
@@ -1133,12 +1139,14 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         Ok(bound)
     }
 
-    // Create a type from a path to an associated type or to an enum variant.
-    // For a path `A::B::C::D`, `qself_ty` and `qself_def` are the type and def for `A::B::C`
-    // and item_segment is the path segment for `D`. We return a type and a def for
-    // the whole path.
-    // Will fail except for `T::A` and `Self::A`; i.e., if `qself_ty`/`qself_def` are not a type
-    // parameter or `Self`.
+    /// Create a type from a path to an associated type or to an enum variant.
+    ///
+    /// For a path `A::B::C::D`, `qself_ty` and `qself` are the type and def for `A::B::C`
+    /// and item_segment is the path segment for `D`. We return a type and a def for
+    /// the whole path.
+    ///
+    /// Will fail except for `T::A` and `Self::A`; i.e., if `qself_ty`/`qself` are not a type
+    /// parameter or `Self`.
     // NOTE: When this function starts resolving `Trait::AssocTy` successfully
     // it should also start reporting the `BARE_TRAIT_OBJECTS` lint.
     #[instrument(level = "debug", skip(self, hir_ref_id, span, qself, assoc_segment), fields(assoc_ident=?assoc_segment.ident), ret)]
@@ -1436,8 +1444,9 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         // Don't attempt to look up inherent associated types when the feature is not enabled.
         // Theoretically it'd be fine to do so since we feature-gate their definition site.
         // However, due to current limitations of the implementation (caused by us performing
-        // selection in AstConv), IATs can lead to cycle errors (#108491, #110106) which mask the
-        // feature-gate error, needlessly confusing users that use IATs by accident (#113265).
+        // selection during HIR/ty lowering instead of in the trait solver), IATs can lead to cycle
+        // errors (#108491, #110106) which mask the feature-gate error, needlessly confusing users
+        // who use IATs by accident (#113265).
         if !tcx.features().inherent_associated_types {
             return Ok(None);
         }
@@ -2014,7 +2023,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         path_segs
     }
 
-    /// Check a type `Path` and convert it to a `Ty`.
+    /// Check a type `Path` and lower it to a `Ty`.
     pub fn lower_res_to_ty(
         &self,
         opt_self_ty: Option<Ty<'tcx>>,
@@ -2054,7 +2063,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
                 self.lower_path_to_ty(span, did, path.segments.last().unwrap())
             }
             Res::Def(kind @ DefKind::Variant, def_id) if permit_variants => {
-                // Convert "variant type" as if it were a real type.
+                // Lower "variant type" as if it were a real type.
                 // The resulting `Ty` is type of the variant's enum for now.
                 assert_eq!(opt_self_ty, None);
 
@@ -2255,8 +2264,8 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         }
     }
 
-    // Converts a hir id corresponding to a type parameter to
-    // a early-bound `ty::Param` or late-bound `ty::Bound`.
+    /// Lower a `HirId` corresponding to a type parameter to an early-bound
+    /// [`ty::Param`] or late-bound [`ty::Bound`].
     pub(crate) fn lower_ty_param(&self, hir_id: hir::HirId) -> Ty<'tcx> {
         let tcx = self.tcx();
         match tcx.named_bound_var(hir_id) {
@@ -2280,8 +2289,8 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         }
     }
 
-    // Converts a hir id corresponding to a const parameter to
-    // a early-bound `ConstKind::Param` or late-bound `ConstKind::Bound`.
+    /// Lower a `HirId` corresponding to a const parameter to an early-bound
+    /// [`ty::ConstKind::Param`] or late-bound [`ty::ConstKind::Bound`].
     pub(crate) fn lower_const_param(&self, hir_id: hir::HirId, param_ty: Ty<'tcx>) -> Const<'tcx> {
         let tcx = self.tcx();
         match tcx.named_bound_var(hir_id) {
@@ -2422,8 +2431,10 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         }
     }
 
-    /// Turns a `hir::Ty` into a `Ty`. For diagnostics' purposes we keep track of whether trait
-    /// objects are borrowed like `&dyn Trait` to avoid emitting redundant errors.
+    /// Lowers a [`hir::Ty`] to a [`Ty`].
+    ///
+    /// For diagnostics' purposes we keep track of whether trait objects are
+    /// borrowed like `&dyn Trait` to avoid emitting redundant errors.
     #[instrument(level = "debug", skip(self), ret)]
     fn lower_ty_inner(&self, ast_ty: &hir::Ty<'tcx>, borrowed: bool, in_path: bool) -> Ty<'tcx> {
         let tcx = self.tcx();
@@ -2812,7 +2823,9 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
     }
 
     /// Given the bounds on an object, determines what single region bound (if any) we can
-    /// use to summarize this type. The basic idea is that we will use the bound the user
+    /// use to summarize this type.
+    ///
+    /// The basic idea is that we will use the bound the user
     /// provided, if they provided one, and otherwise search the supertypes of trait bounds
     /// for region bounds. It may be that we can derive no bound at all, in which case
     /// we return `None`.
