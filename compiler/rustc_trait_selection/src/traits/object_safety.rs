@@ -48,7 +48,10 @@ pub fn hir_ty_lowering_object_safety_violations(
         .map(ObjectSafetyViolation::SupertraitSelf)
         .collect();
 
-    debug!("astconv_object_safety_violations(trait_def_id={:?}) = {:?}", trait_def_id, violations);
+    debug!(
+        "hir_ty_lowering_object_safety_violations(trait_def_id={:?}) = {:?}",
+        trait_def_id, violations
+    );
 
     violations
 }

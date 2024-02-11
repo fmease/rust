@@ -27,6 +27,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         borrowed: bool,
         representation: DynKind,
     ) -> Ty<'tcx> {
+        let _guard = trace::debug_span!("lower_object_ty_to_poly_trait_ref");
         let tcx = self.tcx();
 
         let mut bounds = Bounds::default();
@@ -159,7 +160,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         for (base_trait_ref, span) in regular_traits_refs_spans {
             let base_pred: ty::Predicate<'tcx> = base_trait_ref.to_predicate(tcx);
             for pred in traits::elaborate(tcx, [base_pred]) {
-                debug!("conv_object_ty_poly_trait_ref: observing object predicate `{:?}`", pred);
+                debug!("observing object predicate `{:?}`", pred);
 
                 let bound_predicate = pred.kind();
                 match bound_predicate.skip_binder() {
@@ -245,8 +246,8 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         // the bounds
         let mut duplicates = FxHashSet::default();
         auto_traits.retain(|i| duplicates.insert(i.trait_ref().def_id()));
-        debug!("regular_traits: {:?}", regular_traits);
-        debug!("auto_traits: {:?}", auto_traits);
+        debug!(?regular_traits);
+        debug!(?auto_traits);
 
         // Erase the `dummy_self` (`trait_object_dummy_self`) used above.
         let existential_trait_refs = regular_traits.iter().map(|i| {
@@ -397,10 +398,10 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
                 }
             })
         };
-        debug!("region_bound: {:?}", region_bound);
+        debug!(?region_bound);
 
         let ty = Ty::new_dynamic(tcx, existential_predicates, region_bound, representation);
-        debug!("trait_object_type: {:?}", ty);
+        debug!(trait_object_type = ?ty);
         ty
     }
 }

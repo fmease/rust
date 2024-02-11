@@ -369,7 +369,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
 
         let tcx = self.tcx();
         let generics = tcx.generics_of(def_id);
-        debug!("generics: {:?}", generics);
+        debug!(?generics);
 
         if generics.has_self {
             if generics.parent.is_some() {
@@ -641,6 +641,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         assoc_bindings
     }
 
+    #[instrument(level = "debug", skip(self, parent_args), ret)]
     pub fn lower_args_for_assoc_item(
         &self,
         span: Span,
@@ -648,10 +649,6 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         item_segment: &hir::PathSegment<'tcx>,
         parent_args: GenericArgsRef<'tcx>,
     ) -> GenericArgsRef<'tcx> {
-        debug!(
-            "create_args_for_associated_item(span: {:?}, item_def_id: {:?}, item_segment: {:?}",
-            span, item_def_id, item_segment
-        );
         let (args, _) = self.lower_args_for_path(
             span,
             item_def_id,
@@ -991,15 +988,9 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
     ) -> Result<ty::PolyTraitRef<'tcx>, ErrorGuaranteed> {
         let tcx = self.tcx();
 
-        debug!(
-            "find_bound_for_assoc_item(ty_param_def_id={:?}, assoc_name={:?}, span={:?})",
-            ty_param_def_id, assoc_name, span,
-        );
-
         let predicates =
             &self.get_type_parameter_bounds(span, ty_param_def_id, assoc_name).predicates;
-
-        debug!("find_bound_for_assoc_item: predicates={:#?}", predicates);
+        debug!(?predicates);
 
         let param_name = tcx.hir().ty_param_name(ty_param_def_id);
         self.one_bound_for_assoc_item(
@@ -1149,7 +1140,6 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
     /// parameter or `Self`.
     // NOTE: When this function starts resolving `Trait::AssocTy` successfully
     // it should also start reporting the `BARE_TRAIT_OBJECTS` lint.
-    #[instrument(level = "debug", skip(self, hir_ref_id, span, qself, assoc_segment), fields(assoc_ident=?assoc_segment.ident), ret)]
     pub fn lower_assoc_path_to_ty(
         &self,
         hir_ref_id: hir::HirId,
@@ -1159,7 +1149,10 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         assoc_segment: &hir::PathSegment<'tcx>,
         permit_variants: bool,
     ) -> Result<(Ty<'tcx>, DefKind, DefId), ErrorGuaranteed> {
+        let _guard = tracing::debug_span!("lower_assoc_path_to_ty").entered();
+        debug!(%qself_ty, ?assoc_segment.ident);
         let tcx = self.tcx();
+
         let assoc_ident = assoc_segment.ident;
         let qself_res = if let hir::TyKind::Path(hir::QPath::Resolved(_, path)) = &qself.kind {
             path.res
@@ -1712,25 +1705,23 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         item_segment: &hir::PathSegment<'tcx>,
         constness: ty::BoundConstness,
     ) -> Ty<'tcx> {
+        let _guard = tracing::debug_span!("lower_qpath_to_ty").entered();
         let tcx = self.tcx();
 
         let trait_def_id = tcx.parent(item_def_id);
-
-        debug!("qpath_to_ty: trait_def_id={:?}", trait_def_id);
+        debug!(?trait_def_id);
 
         let Some(self_ty) = opt_self_ty else {
             let path_str = tcx.def_path_str(trait_def_id);
 
             let def_id = self.item_def_id();
-
-            debug!("qpath_to_ty: self.item_def_id()={:?}", def_id);
+            debug!(item_def_id = ?def_id);
 
             let parent_def_id = def_id
                 .as_local()
                 .map(|def_id| tcx.local_def_id_to_hir_id(def_id))
                 .map(|hir_id| tcx.hir().get_parent_item(hir_id).to_def_id());
-
-            debug!("qpath_to_ty: parent_def_id={:?}", parent_def_id);
+            debug!(?parent_def_id);
 
             // If the trait in segment is the same as the trait defining the item,
             // use the `<Self as ..>` syntax in the error.
@@ -1765,8 +1756,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
             );
             return Ty::new_error(tcx, reported);
         };
-
-        debug!("qpath_to_ty: self_type={:?}", self_ty);
+        debug!(?self_ty);
 
         let trait_ref = self.lower_path_to_mono_trait_ref(
             span,
@@ -1776,11 +1766,10 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
             false,
             constness,
         );
+        debug!(?trait_ref);
 
         let item_args =
             self.lower_args_for_assoc_item(span, item_def_id, item_segment, trait_ref.args);
-
-        debug!("qpath_to_ty: trait_ref={:?}", trait_ref);
 
         Ty::new_projection(tcx, item_def_id, item_args)
     }
@@ -2031,12 +2020,9 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         hir_id: hir::HirId,
         permit_variants: bool,
     ) -> Ty<'tcx> {
+        let _guard = tracing::debug_span!("lower_res_to_ty").entered();
+        debug!(?path.res, ?opt_self_ty, ?path.segments);
         let tcx = self.tcx();
-
-        debug!(
-            "res_to_ty(res={:?}, opt_self_ty={:?}, path_segments={:?})",
-            path.res, opt_self_ty, path.segments
-        );
 
         let span = path.span;
         match path.res {
@@ -2565,12 +2551,11 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
         lifetimes: &[hir::GenericArg<'_>],
         in_trait: bool,
     ) -> Ty<'tcx> {
-        debug!("impl_trait_ty_to_ty(def_id={:?}, lifetimes={:?})", def_id, lifetimes);
         let tcx = self.tcx();
 
         let generics = tcx.generics_of(def_id);
+        debug!(?generics);
 
-        debug!("impl_trait_ty_to_ty: generics={:?}", generics);
         let args = ty::GenericArgs::for_item(tcx, def_id, |param, _| {
             // We use `generics.count() - lifetimes.len()` here instead of `generics.parent_count`
             // since return-position impl trait in trait squashes all of the generics from its source fn
@@ -2596,7 +2581,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
                 tcx.mk_param_from_def(param)
             }
         });
-        debug!("impl_trait_ty_to_ty: args={:?}", args);
+        debug!(?args);
 
         if in_trait {
             Ty::new_projection(tcx, def_id, args)
