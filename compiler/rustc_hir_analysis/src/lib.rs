@@ -108,7 +108,7 @@ use rustc_span::{symbol::sym, Span, DUMMY_SP};
 use rustc_target::spec::abi::Abi;
 use rustc_trait_selection::traits;
 
-use astconv::{AstConv, OnlySelfBounds};
+use astconv::{HirTyLowerer, OnlySelfBounds};
 use bounds::Bounds;
 use rustc_hir::def::DefKind;
 
@@ -216,16 +216,15 @@ pub fn check_crate(tcx: TyCtxt<'_>) -> Result<(), ErrorGuaranteed> {
 
 /// A quasi-deprecated helper used in rustdoc and clippy to get
 /// the type from a HIR node.
-pub fn hir_ty_to_ty<'tcx>(tcx: TyCtxt<'tcx>, hir_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
+pub fn lower_ty<'tcx>(tcx: TyCtxt<'tcx>, hir_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
     // In case there are any projections, etc., find the "environment"
     // def-ID that will be used to determine the traits/predicates in
     // scope. This is derived from the enclosing item-like thing.
     let env_def_id = tcx.hir().get_parent_item(hir_ty.hir_id);
-    let item_cx = self::collect::ItemCtxt::new(tcx, env_def_id.def_id);
-    item_cx.astconv().ast_ty_to_ty(hir_ty)
+    collect::ItemCtxt::new(tcx, env_def_id.def_id).lowerer().lower_ty(hir_ty)
 }
 
-pub fn hir_trait_to_predicates<'tcx>(
+pub fn lower_trait_to_predicates<'tcx>(
     tcx: TyCtxt<'tcx>,
     hir_trait: &hir::TraitRef<'tcx>,
     self_ty: Ty<'tcx>,
@@ -234,9 +233,9 @@ pub fn hir_trait_to_predicates<'tcx>(
     // def-ID that will be used to determine the traits/predicates in
     // scope. This is derived from the enclosing item-like thing.
     let env_def_id = tcx.hir().get_parent_item(hir_trait.hir_ref_id);
-    let item_cx = self::collect::ItemCtxt::new(tcx, env_def_id.def_id);
+    let item_cx = collect::ItemCtxt::new(tcx, env_def_id.def_id);
     let mut bounds = Bounds::default();
-    let _ = &item_cx.astconv().instantiate_poly_trait_ref(
+    let _ = item_cx.lowerer().instantiate_poly_trait_ref(
         hir_trait,
         DUMMY_SP,
         ty::BoundConstness::NotConst,

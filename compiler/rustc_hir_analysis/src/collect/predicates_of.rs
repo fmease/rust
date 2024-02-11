@@ -1,4 +1,4 @@
-use crate::astconv::{AstConv, OnlySelfBounds, PredicateFilter};
+use crate::astconv::{HirTyLowerer, OnlySelfBounds, PredicateFilter};
 use crate::bounds::Bounds;
 use crate::collect::ItemCtxt;
 use crate::constrained_generic_params as cgp;
@@ -170,7 +170,7 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
     // like `trait Foo: A + B + C`.
     if let Some(self_bounds) = is_trait {
         predicates.extend(
-            icx.astconv()
+            icx.lowerer()
                 .compute_bounds(tcx.types.self_param, self_bounds, PredicateFilter::All)
                 .clauses(),
         );
@@ -196,10 +196,10 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
             // We already dealt with early bound lifetimes above.
             GenericParamKind::Lifetime { .. } => (),
             GenericParamKind::Type { .. } => {
-                let param_ty = icx.astconv().hir_id_to_bound_ty(param.hir_id);
+                let param_ty = icx.lowerer().lower_ty_param(param.hir_id);
                 let mut bounds = Bounds::default();
                 // Params are implicitly sized unless a `?Sized` bound is found
-                icx.astconv().add_implicitly_sized(
+                icx.lowerer().add_implicitly_sized(
                     &mut bounds,
                     param_ty,
                     &[],
@@ -215,7 +215,7 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
                     .type_of(param.def_id.to_def_id())
                     .no_bound_vars()
                     .expect("const parameters cannot be generic");
-                let ct = icx.astconv().hir_id_to_bound_const(param.hir_id, ct_ty);
+                let ct = icx.lowerer().lower_const_param(param.hir_id, ct_ty);
                 predicates.insert((
                     ty::ClauseKind::ConstArgHasType(ct, ct_ty).to_predicate(tcx),
                     param.span,
@@ -229,7 +229,7 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
     for predicate in ast_generics.predicates {
         match predicate {
             hir::WherePredicate::BoundPredicate(bound_pred) => {
-                let ty = icx.to_ty(bound_pred.bounded_ty);
+                let ty = icx.lower_ty(bound_pred.bounded_ty);
                 let bound_vars = tcx.late_bound_vars(bound_pred.hir_id);
                 // Keep the type around in a dummy predicate, in case of no bounds.
                 // That way, `where Ty:` is not a complete noop (see #53696) and `Ty`
@@ -253,7 +253,7 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
                 }
 
                 let mut bounds = Bounds::default();
-                icx.astconv().add_bounds(
+                icx.lowerer().add_bounds(
                     ty,
                     bound_pred.bounds.iter(),
                     &mut bounds,
@@ -264,11 +264,11 @@ fn gather_explicit_predicates_of(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::Gen
             }
 
             hir::WherePredicate::RegionPredicate(region_pred) => {
-                let r1 = icx.astconv().ast_region_to_region(region_pred.lifetime, None);
+                let r1 = icx.lowerer().lower_region(region_pred.lifetime, None);
                 predicates.extend(region_pred.bounds.iter().map(|bound| {
                     let (r2, span) = match bound {
                         hir::GenericBound::Outlives(lt) => {
-                            (icx.astconv().ast_region_to_region(lt, None), lt.ident.span)
+                            (icx.lowerer().lower_region(lt, None), lt.ident.span)
                         }
                         bound => {
                             span_bug!(
@@ -625,7 +625,7 @@ pub(super) fn implied_predicates_with_filter(
     let icx = ItemCtxt::new(tcx, trait_def_id);
 
     let self_param_ty = tcx.types.self_param;
-    let superbounds = icx.astconv().compute_bounds(self_param_ty, bounds, filter);
+    let superbounds = icx.lowerer().compute_bounds(self_param_ty, bounds, filter);
 
     let where_bounds_that_match = icx.type_parameter_bounds_in_generics(
         generics,
@@ -788,13 +788,13 @@ impl<'tcx> ItemCtxt<'tcx> {
             let bound_ty = if predicate.is_param_bound(param_def_id.to_def_id()) {
                 ty
             } else if matches!(filter, PredicateFilter::All) {
-                self.to_ty(predicate.bounded_ty)
+                self.lower_ty(predicate.bounded_ty)
             } else {
                 continue;
             };
 
             let bound_vars = self.tcx.late_bound_vars(predicate.hir_id);
-            self.astconv().add_bounds(
+            self.lowerer().add_bounds(
                 bound_ty,
                 predicate.bounds.iter().filter(|bound| {
                     assoc_name

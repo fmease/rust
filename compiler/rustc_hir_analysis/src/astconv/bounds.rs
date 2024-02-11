@@ -10,12 +10,12 @@ use rustc_trait_selection::traits;
 use smallvec::SmallVec;
 
 use crate::astconv::{
-    AstConv, ConvertedBinding, ConvertedBindingKind, OnlySelfBounds, PredicateFilter,
+    HirTyLowerer, LoweredBinding, LoweredBindingKind, OnlySelfBounds, PredicateFilter,
 };
 use crate::bounds::Bounds;
 use crate::errors;
 
-impl<'tcx> dyn AstConv<'tcx> + '_ {
+impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// Sets `implicitly_sized` to true on `Bounds` if necessary
     pub(crate) fn add_implicitly_sized(
         &self,
@@ -156,7 +156,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     );
                 }
                 hir::GenericBound::Outlives(lifetime) => {
-                    let region = self.ast_region_to_region(lifetime, None);
+                    let region = self.lower_region(lifetime, None);
                     bounds.push_region_bound(
                         self.tcx(),
                         ty::Binder::bind_with_vars(
@@ -234,11 +234,11 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
     /// `trait_ref` here will be `for<'a> T: Iterator`. The `binding` data however is from *inside*
     /// the binder (e.g., `&'a u32`) and hence may reference bound regions.
     #[instrument(level = "debug", skip(self, bounds, speculative, dup_bindings, path_span))]
-    pub(super) fn add_predicates_for_ast_type_binding(
+    pub(super) fn lower_type_bindings_to_predicates(
         &self,
         hir_ref_id: hir::HirId,
         trait_ref: ty::PolyTraitRef<'tcx>,
-        binding: &ConvertedBinding<'_, 'tcx>,
+        binding: &LoweredBinding<'_, 'tcx>,
         bounds: &mut Bounds<'tcx>,
         speculative: bool,
         dup_bindings: &mut FxHashMap<DefId, Span>,
@@ -266,7 +266,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
         let assoc_kind =
             if binding.gen_args.parenthesized == hir::GenericArgsParentheses::ReturnTypeNotation {
                 ty::AssocKind::Fn
-            } else if let ConvertedBindingKind::Equality(term) = binding.kind
+            } else if let LoweredBindingKind::Equality(term) = binding.kind
                 && let ty::TermKind::Const(_) = term.node.unpack()
             {
                 ty::AssocKind::Const
@@ -274,7 +274,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                 ty::AssocKind::Type
             };
 
-        let candidate = if self.trait_defines_associated_item_named(
+        let candidate = if self.trait_defines_assoc_item_named(
             trait_ref.def_id(),
             assoc_kind,
             binding.item_name,
@@ -420,7 +420,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     infer_args: false,
                 };
 
-                let args_trait_ref_and_assoc_item = self.create_args_for_associated_item(
+                let args_trait_ref_and_assoc_item = self.lower_args_for_assoc_item(
                     path_span,
                     assoc_item.def_id,
                     &item_segment,
@@ -441,7 +441,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
             //
             //     for<'a> <T as Iterator>::Item = &'a str // <-- 'a is bad
             //     for<'a> <T as FnMut<(&'a u32,)>>::Output = &'a str // <-- 'a is ok
-            if let ConvertedBindingKind::Equality(ty) = binding.kind {
+            if let LoweredBindingKind::Equality(ty) = binding.kind {
                 let late_bound_in_trait_ref =
                     tcx.collect_constrained_late_bound_regions(&projection_ty);
                 let late_bound_in_ty =
@@ -471,12 +471,12 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
         }
 
         match binding.kind {
-            ConvertedBindingKind::Equality(..) if let ty::AssocKind::Fn = assoc_kind => {
+            LoweredBindingKind::Equality(..) if let ty::AssocKind::Fn = assoc_kind => {
                 return Err(self.tcx().dcx().emit_err(
                     crate::errors::ReturnTypeNotationEqualityBound { span: binding.span },
                 ));
             }
-            ConvertedBindingKind::Equality(term) => {
+            LoweredBindingKind::Equality(term) => {
                 // "Desugar" a constraint like `T: Iterator<Item = u32>` this to
                 // the "projection predicate" for:
                 //
@@ -490,7 +490,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     binding.span,
                 );
             }
-            ConvertedBindingKind::Constraint(ast_bounds) => {
+            LoweredBindingKind::Constraint(ast_bounds) => {
                 // "Desugar" a constraint like `T: Iterator<Item: Debug>` to
                 //
                 // `<T as Iterator>::Item: Debug`

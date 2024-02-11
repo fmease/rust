@@ -1,4 +1,4 @@
-use crate::astconv::{AstConv, ConvertedBindingKind};
+use crate::astconv::{HirTyLowerer, LoweredBindingKind};
 use crate::errors::{
     self, AssocTypeBindingNotAllowed, ManualImplementation, MissingTypeParams,
     ParenthesizedFnTraitExpansion,
@@ -22,7 +22,7 @@ use rustc_span::symbol::{sym, Ident};
 use rustc_span::{Span, Symbol, DUMMY_SP};
 use rustc_trait_selection::traits::object_safety_violations_for_assoc_item;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
     /// On missing type parameters, emit an E0393 error and provide a structured suggestion using
     /// the type parameter's name as a placeholder.
     pub(crate) fn complain_about_missing_type_params(
@@ -111,7 +111,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         assoc_kind: ty::AssocKind,
         assoc_name: Ident,
         span: Span,
-        binding: Option<&super::ConvertedBinding<'_, 'tcx>>,
+        binding: Option<&super::LoweredBinding<'_, 'tcx>>,
     ) -> ErrorGuaranteed
     where
         I: Iterator<Item = ty::PolyTraitRef<'tcx>>,
@@ -289,13 +289,13 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         assoc_kind: ty::AssocKind,
         ident: Ident,
         span: Span,
-        binding: Option<&super::ConvertedBinding<'_, 'tcx>>,
+        binding: Option<&super::LoweredBinding<'_, 'tcx>>,
     ) -> ErrorGuaranteed {
         let tcx = self.tcx();
 
         let bound_on_assoc_const_label = if let ty::AssocKind::Const = assoc_item.kind
             && let Some(binding) = binding
-            && let ConvertedBindingKind::Constraint(_) = binding.kind
+            && let LoweredBindingKind::Constraint(_) = binding.kind
         {
             let lo = if binding.gen_args.span_ext.is_dummy() {
                 ident.span
@@ -309,7 +309,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
         // FIXME(associated_const_equality): This has quite a few false positives and negatives.
         let wrap_in_braces_sugg = if let Some(binding) = binding
-            && let ConvertedBindingKind::Equality(term) = binding.kind
+            && let LoweredBindingKind::Equality(term) = binding.kind
             && let ty::TermKind::Ty(ty) = term.node.unpack()
             && (ty.is_enum() || ty.references_error())
             && tcx.features().associated_const_equality
@@ -325,7 +325,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         // For equality bounds, we want to blame the term (RHS) instead of the item (LHS) since
         // one can argue that that's more “untuitive” to the user.
         let (span, expected_because_label, expected, got) = if let Some(binding) = binding
-            && let ConvertedBindingKind::Equality(term) = binding.kind
+            && let LoweredBindingKind::Equality(term) = binding.kind
         {
             (term.span, Some(ident.span), assoc_item.kind, assoc_kind)
         } else {
