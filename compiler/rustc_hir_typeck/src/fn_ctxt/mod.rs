@@ -9,7 +9,7 @@ use crate::{CoroutineTypes, Diverges, EnclosingBreakables, Inherited};
 use rustc_errors::{DiagCtxt, ErrorGuaranteed};
 use rustc_hir as hir;
 use rustc_hir::def_id::{DefId, LocalDefId};
-use rustc_hir_analysis::astconv::AstConv;
+use rustc_hir_analysis::astconv::HirLowerer;
 use rustc_infer::infer;
 use rustc_infer::infer::error_reporting::TypeErrCtxt;
 use rustc_infer::infer::type_variable::{TypeVariableOrigin, TypeVariableOriginKind};
@@ -195,7 +195,7 @@ impl<'a, 'tcx> Deref for FnCtxt<'a, 'tcx> {
     }
 }
 
-impl<'a, 'tcx> AstConv<'tcx> for FnCtxt<'a, 'tcx> {
+impl<'a, 'tcx> HirLowerer<'tcx> for FnCtxt<'a, 'tcx> {
     fn tcx<'b>(&'b self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -288,7 +288,7 @@ impl<'a, 'tcx> AstConv<'tcx> for FnCtxt<'a, 'tcx> {
             poly_trait_ref,
         );
 
-        let item_args = self.astconv().create_args_for_associated_item(
+        let item_args = self.lowerer().lower_args_for_assoc_item(
             span,
             item_def_id,
             item_segment,
@@ -343,8 +343,8 @@ impl<'a, 'tcx> AstConv<'tcx> for FnCtxt<'a, 'tcx> {
 /// The `ty` representation of a user-provided type. Depending on the use-site
 /// we want to either use the unnormalized or the normalized form of this type.
 ///
-/// This is a bridge between the interface of `AstConv`, which outputs a raw `Ty`,
-/// and the API in this module, which expect `Ty` to be fully normalized.
+/// This is a bridge between the interface of HIR lowering, which outputs a raw
+/// `Ty`, and the API in this module, which expect `Ty` to be fully normalized.
 #[derive(Clone, Copy, Debug)]
 pub struct LoweredTy<'tcx> {
     /// The unnormalized type provided by the user.

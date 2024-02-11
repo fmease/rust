@@ -1,4 +1,4 @@
-use crate::astconv::{AstConv, ConvertedBindingKind};
+use crate::astconv::{ConvertedBindingKind, HirLowerer};
 use crate::errors::{
     self, AssocTypeBindingNotAllowed, ManualImplementation, MissingTypeParams,
     ParenthesizedFnTraitExpansion,
@@ -22,7 +22,7 @@ use rustc_span::symbol::{sym, Ident};
 use rustc_span::{Span, Symbol, DUMMY_SP};
 use rustc_trait_selection::traits::object_safety_violations_for_assoc_item;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'o, 'tcx> dyn HirLowerer<'tcx> + 'o {
     /// On missing type parameters, emit an E0393 error and provide a structured suggestion using
     /// the type parameter's name as a placeholder.
     pub(crate) fn complain_about_missing_type_params(

@@ -32,11 +32,12 @@ use std::ops::ControlFlow;
 
 pub use crate::traits::{MethodViolationCode, ObjectSafetyViolation};
 
-/// Returns the object safety violations that affect
-/// astconv -- currently, `Self` in supertraits. This is needed
+/// Returns the object safety violations that affect HIR lowering.
+///
+/// Currently that is `Self` in supertraits. This is needed
 /// because `object_safety_violations` can't be used during
 /// type collection.
-pub fn astconv_object_safety_violations(
+pub fn hir_lowering_object_safety_violations(
     tcx: TyCtxt<'_>,
     trait_def_id: DefId,
 ) -> Vec<ObjectSafetyViolation> {
@@ -47,7 +48,10 @@ pub fn astconv_object_safety_violations(
         .map(ObjectSafetyViolation::SupertraitSelf)
         .collect();
 
-    debug!("astconv_object_safety_violations(trait_def_id={:?}) = {:?}", trait_def_id, violations);
+    debug!(
+        "hir_lowering_object_safety_violations(trait_def_id={:?}) = {:?}",
+        trait_def_id, violations
+    );
 
     violations
 }

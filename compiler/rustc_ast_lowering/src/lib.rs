@@ -1121,8 +1121,8 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                     //
                     //     fn foo(x: impl Iterator<Item: Debug>)
                     //
-                    // so we leave it as is and this gets expanded in astconv to a bound like
-                    // `<T as Iterator>::Item: Debug` where `T` is the type parameter for the
+                    // so we leave it as is and this gets expanded during HIR lowering to a bound
+                    // like `<T as Iterator>::Item: Debug` where `T` is the type parameter for the
                     // `impl Iterator`.
                     _ => DesugarKind::Bound,
                 };

@@ -1,7 +1,7 @@
 use super::IsMethodCall;
 use crate::astconv::{
-    errors::prohibit_assoc_ty_binding, CreateSubstsForGenericArgsCtxt, ExplicitLateBound,
-    GenericArgCountMismatch, GenericArgCountResult, GenericArgPosition,
+    errors::prohibit_assoc_ty_binding, ExplicitLateBound, GenericArgCountMismatch,
+    GenericArgCountResult, GenericArgPosition, GenericArgsLowerer,
 };
 use crate::structured_errors::{GenericArgsInfo, StructuredDiagnostic, WrongNumberOfGenericArgs};
 use rustc_ast::ast::ParamKindOrd;
@@ -177,7 +177,7 @@ pub fn create_args_for_parent_generic_args<'tcx: 'a, 'a>(
     has_self: bool,
     self_ty: Option<Ty<'tcx>>,
     arg_count: &GenericArgCountResult,
-    ctx: &mut impl CreateSubstsForGenericArgsCtxt<'a, 'tcx>,
+    ctx: &mut impl GenericArgsLowerer<'a, 'tcx>,
 ) -> GenericArgsRef<'tcx> {
     // Collect the segments of the path; we need to substitute arguments
     // for parameters throughout the entire path (wherever there are

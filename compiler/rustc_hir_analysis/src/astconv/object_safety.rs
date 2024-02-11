@@ -11,13 +11,13 @@ use rustc_middle::ty::{self, Ty};
 use rustc_middle::ty::{DynKind, ToPredicate};
 use rustc_span::Span;
 use rustc_trait_selection::traits::error_reporting::report_object_safety_error;
-use rustc_trait_selection::traits::{self, astconv_object_safety_violations};
+use rustc_trait_selection::traits::{self, hir_lowering_object_safety_violations};
 
 use smallvec::{smallvec, SmallVec};
 
-use super::AstConv;
+use super::HirLowerer;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'o, 'tcx> dyn HirLowerer<'tcx> + 'o {
     pub(super) fn conv_object_ty_poly_trait_ref(
         &self,
         span: Span,
@@ -136,7 +136,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         // to avoid ICEs.
         for item in &regular_traits {
             let object_safety_violations =
-                astconv_object_safety_violations(tcx, item.trait_ref().def_id());
+                hir_lowering_object_safety_violations(tcx, item.trait_ref().def_id());
             if !object_safety_violations.is_empty() {
                 let reported = report_object_safety_error(
                     tcx,
@@ -370,11 +370,11 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
         // Use explicitly-specified region bound.
         let region_bound = if !lifetime.is_elided() {
-            self.ast_region_to_region(lifetime, None)
+            self.lower_region(lifetime, None)
         } else {
             self.compute_object_lifetime_bound(span, existential_predicates).unwrap_or_else(|| {
                 if tcx.named_bound_var(lifetime.hir_id).is_some() {
-                    self.ast_region_to_region(lifetime, None)
+                    self.lower_region(lifetime, None)
                 } else {
                     self.re_infer(None, span).unwrap_or_else(|| {
                         let err = struct_span_code_err!(

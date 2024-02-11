@@ -466,7 +466,7 @@ pub fn walk_use_tree<'a, V: Visitor<'a>>(visitor: &mut V, use_tree: &'a UseTree,
     visitor.visit_path(&use_tree.prefix, id);
     match &use_tree.kind {
         UseTreeKind::Simple(rename) => {
-            // The extra IDs are handled during HIR lowering.
+            // The extra IDs are handled during AST lowering.
             if let &Some(rename) = rename {
                 visitor.visit_ident(rename);
             }

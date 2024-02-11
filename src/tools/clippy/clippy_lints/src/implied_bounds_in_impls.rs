@@ -7,7 +7,7 @@ use rustc_hir::{
     Body, FnDecl, FnRetTy, GenericArg, GenericBound, ImplItem, ImplItemKind, ItemKind, TraitBoundModifier, TraitItem,
     TraitItemKind, TyKind,
 };
-use rustc_hir_analysis::hir_ty_to_ty;
+use rustc_hir_analysis::lower_ty;
 use rustc_lint::{LateContext, LateLintPass};
 use rustc_middle::ty::{self, ClauseKind, Generics, Ty, TyCtxt};
 use rustc_session::declare_lint_pass;
@@ -150,7 +150,7 @@ fn try_resolve_type<'tcx>(
     index: usize,
 ) -> Option<Ty<'tcx>> {
     match args.get(index - 1) {
-        Some(GenericArg::Type(ty)) => Some(hir_ty_to_ty(tcx, ty)),
+        Some(GenericArg::Type(ty)) => Some(lower_ty(tcx, ty)),
         Some(_) => None,
         None => Some(tcx.type_of(generics.params[index].def_id).skip_binder()),
     }

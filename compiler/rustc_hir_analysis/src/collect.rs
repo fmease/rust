@@ -39,7 +39,7 @@ use std::cell::Cell;
 use std::iter;
 use std::ops::Bound;
 
-use crate::astconv::AstConv;
+use crate::astconv::HirLowerer;
 use crate::check::intrinsic::intrinsic_operation_unsafety;
 use crate::errors;
 pub use type_of::test_opaque_hidden_types;
@@ -90,13 +90,12 @@ pub fn provide(providers: &mut Providers) {
 
 ///////////////////////////////////////////////////////////////////////////
 
-/// Context specific to some particular item. This is what implements
-/// [`AstConv`].
+/// Context specific to some particular item. This is what implements [`HirLowerer`].
 ///
 /// # `ItemCtxt` vs `FnCtxt`
 ///
 /// `ItemCtxt` is primarily used to type-check item signatures and lower them
-/// from HIR to their [`ty::Ty`] representation, which is exposed using [`AstConv`].
+/// from HIR to their [`ty::Ty`] representation, which is exposed using [`HirLowerer`].
 /// It's also used for the bodies of items like structs where the body (the fields)
 /// are just signatures.
 ///
@@ -350,7 +349,7 @@ impl<'tcx> ItemCtxt<'tcx> {
     }
 
     pub fn to_ty(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
-        self.astconv().ast_ty_to_ty(ast_ty)
+        self.lowerer().lower_ty(ast_ty)
     }
 
     pub fn hir_id(&self) -> hir::HirId {
@@ -369,7 +368,7 @@ impl<'tcx> ItemCtxt<'tcx> {
     }
 }
 
-impl<'tcx> AstConv<'tcx> for ItemCtxt<'tcx> {
+impl<'tcx> HirLowerer<'tcx> for ItemCtxt<'tcx> {
     fn tcx(&self) -> TyCtxt<'tcx> {
         self.tcx
     }
@@ -417,7 +416,7 @@ impl<'tcx> AstConv<'tcx> for ItemCtxt<'tcx> {
         poly_trait_ref: ty::PolyTraitRef<'tcx>,
     ) -> Ty<'tcx> {
         if let Some(trait_ref) = poly_trait_ref.no_bound_vars() {
-            let item_args = self.astconv().create_args_for_associated_item(
+            let item_args = self.lowerer().lower_args_for_assoc_item(
                 span,
                 item_def_id,
                 item_segment,
@@ -1088,7 +1087,7 @@ fn fn_sig(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<ty::PolyFnSig<
             if let Item(hir::Item { kind: ItemKind::Impl(i), .. }) = tcx.hir().get_parent(hir_id)
                 && i.of_trait.is_some()
             {
-                icx.astconv().ty_of_fn(
+                icx.lowerer().lower_fn_ty(
                     hir_id,
                     sig.header.unsafety,
                     sig.header.abi,
@@ -1105,9 +1104,14 @@ fn fn_sig(tcx: TyCtxt<'_>, def_id: LocalDefId) -> ty::EarlyBinder<ty::PolyFnSig<
             kind: TraitItemKind::Fn(FnSig { header, decl, span: _ }, _),
             generics,
             ..
-        }) => {
-            icx.astconv().ty_of_fn(hir_id, header.unsafety, header.abi, decl, Some(generics), None)
-        }
+        }) => icx.lowerer().lower_fn_ty(
+            hir_id,
+            header.unsafety,
+            header.abi,
+            decl,
+            Some(generics),
+            None,
+        ),
 
         ForeignItem(&hir::ForeignItem { kind: ForeignItemKind::Fn(fn_decl, _, _), .. }) => {
             let abi = tcx.hir().get_foreign_abi(hir_id);
@@ -1215,7 +1219,7 @@ fn infer_return_ty_for_fn_sig<'tcx>(
                 ))
             }
         }
-        None => icx.astconv().ty_of_fn(
+        None => icx.lowerer().lower_fn_ty(
             hir_id,
             sig.header.unsafety,
             sig.header.abi,
@@ -1346,7 +1350,7 @@ fn impl_trait_ref(
                 // we have a const impl, but for a trait without `#[const_trait]`, so
                 // without the host param. If we continue with the HIR trait ref, we get
                 // ICEs for generic arg count mismatch. We do a little HIR editing to
-                // make astconv happy.
+                // make HIR lowering happy.
                 let mut path_segments = ast_trait_ref.path.segments.to_vec();
                 let last_segment = path_segments.len() - 1;
                 let mut args = *path_segments[last_segment].args();
@@ -1360,9 +1364,9 @@ fn impl_trait_ref(
                     segments: tcx.hir_arena.alloc_slice(&path_segments),
                 };
                 let trait_ref = tcx.hir_arena.alloc(hir::TraitRef { path: tcx.hir_arena.alloc(path), hir_ref_id: ast_trait_ref.hir_ref_id });
-                icx.astconv().instantiate_mono_trait_ref(trait_ref, selfty)
+                icx.lowerer().instantiate_mono_trait_ref(trait_ref, selfty)
             } else {
-                icx.astconv().instantiate_mono_trait_ref(ast_trait_ref, selfty)
+                icx.lowerer().instantiate_mono_trait_ref(ast_trait_ref, selfty)
             }
         })
         .map(ty::EarlyBinder::bind)
@@ -1489,7 +1493,7 @@ fn compute_sig_of_foreign_fn_decl<'tcx>(
     };
     let hir_id = tcx.local_def_id_to_hir_id(def_id);
     let fty =
-        ItemCtxt::new(tcx, def_id).astconv().ty_of_fn(hir_id, unsafety, abi, decl, None, None);
+        ItemCtxt::new(tcx, def_id).lowerer().lower_fn_ty(hir_id, unsafety, abi, decl, None, None);
 
     // Feature gate SIMD types in FFI, since I am not sure that the
     // ABIs are handled at all correctly. -huonw

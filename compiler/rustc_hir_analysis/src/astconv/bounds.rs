@@ -10,12 +10,12 @@ use rustc_trait_selection::traits;
 use smallvec::SmallVec;
 
 use crate::astconv::{
-    AstConv, ConvertedBinding, ConvertedBindingKind, OnlySelfBounds, PredicateFilter,
+    ConvertedBinding, ConvertedBindingKind, HirLowerer, OnlySelfBounds, PredicateFilter,
 };
 use crate::bounds::Bounds;
 use crate::errors;
 
-impl<'tcx> dyn AstConv<'tcx> + '_ {
+impl<'tcx> dyn HirLowerer<'tcx> + '_ {
     /// Sets `implicitly_sized` to true on `Bounds` if necessary
     pub(crate) fn add_implicitly_sized(
         &self,
@@ -156,7 +156,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     );
                 }
                 hir::GenericBound::Outlives(lifetime) => {
-                    let region = self.ast_region_to_region(lifetime, None);
+                    let region = self.lower_region(lifetime, None);
                     bounds.push_region_bound(
                         self.tcx(),
                         ty::Binder::bind_with_vars(
@@ -234,7 +234,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
     /// `trait_ref` here will be `for<'a> T: Iterator`. The `binding` data however is from *inside*
     /// the binder (e.g., `&'a u32`) and hence may reference bound regions.
     #[instrument(level = "debug", skip(self, bounds, speculative, dup_bindings, path_span))]
-    pub(super) fn add_predicates_for_ast_type_binding(
+    pub(super) fn lower_type_bindings_to_predicates(
         &self,
         hir_ref_id: hir::HirId,
         trait_ref: ty::PolyTraitRef<'tcx>,
@@ -276,7 +276,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                 ty::AssocKind::Type
             };
 
-        let candidate = if self.trait_defines_associated_item_named(
+        let candidate = if self.trait_defines_assoc_item_named(
             trait_ref.def_id(),
             assoc_kind,
             binding.item_name,
@@ -422,7 +422,7 @@ impl<'tcx> dyn AstConv<'tcx> + '_ {
                     infer_args: false,
                 };
 
-                let args_trait_ref_and_assoc_item = self.create_args_for_associated_item(
+                let args_trait_ref_and_assoc_item = self.lower_args_for_assoc_item(
                     path_span,
                     assoc_item.def_id,
                     &item_segment,

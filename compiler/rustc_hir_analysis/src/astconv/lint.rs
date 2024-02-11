@@ -6,9 +6,9 @@ use rustc_lint_defs::{builtin::BARE_TRAIT_OBJECTS, Applicability};
 use rustc_span::Span;
 use rustc_trait_selection::traits::error_reporting::suggestions::NextTypeParamName;
 
-use super::AstConv;
+use super::HirLowerer;
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'o, 'tcx> dyn HirLowerer<'tcx> + 'o {
     /// Make sure that we are in the condition to suggest the blanket implementation.
     pub(super) fn maybe_lint_blanket_trait_impl(
         &self,

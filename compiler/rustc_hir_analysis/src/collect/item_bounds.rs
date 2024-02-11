@@ -1,5 +1,5 @@
 use super::ItemCtxt;
-use crate::astconv::{AstConv, PredicateFilter};
+use crate::astconv::{HirLowerer, PredicateFilter};
 use rustc_hir as hir;
 use rustc_infer::traits::util;
 use rustc_middle::ty::GenericArgs;
@@ -27,9 +27,9 @@ fn associated_type_bounds<'tcx>(
     );
 
     let icx = ItemCtxt::new(tcx, assoc_item_def_id);
-    let mut bounds = icx.astconv().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
+    let mut bounds = icx.lowerer().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
     // Associated types are implicitly sized unless a `?Sized` bound is found
-    icx.astconv().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
+    icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
 
     let trait_def_id = tcx.local_parent(assoc_item_def_id);
     let trait_predicates = tcx.trait_explicit_predicates_and_bounds(trait_def_id);
@@ -66,9 +66,9 @@ fn opaque_type_bounds<'tcx>(
 ) -> &'tcx [(ty::Clause<'tcx>, Span)] {
     ty::print::with_no_queries!({
         let icx = ItemCtxt::new(tcx, opaque_def_id);
-        let mut bounds = icx.astconv().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
+        let mut bounds = icx.lowerer().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
         // Opaque types are implicitly sized unless a `?Sized` bound is found
-        icx.astconv().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
+        icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
         debug!(?bounds);
 
         tcx.arena.alloc_from_iter(bounds.clauses())
@@ -119,8 +119,8 @@ pub(super) fn explicit_item_bounds(
             let item_ty = Ty::new_opaque(tcx, def_id.to_def_id(), args);
             opaque_type_bounds(tcx, def_id, bounds, item_ty, *span)
         }
-        // Since RPITITs are astconv'd as projections in `ast_ty_to_ty`, when we're asking
-        // for the item bounds of the *opaques* in a trait's default method signature, we
+        // Since RPITITs are lowered as projections in `<dyn HirLowerer>::lower_ty`, when we're
+        // asking for the item bounds of the *opaques* in a trait's default method signature, we
         // need to map these projections back to opaques.
         hir::Node::Item(hir::Item {
             kind: hir::ItemKind::OpaqueTy(hir::OpaqueTy { bounds, in_trait: true, origin, .. }),

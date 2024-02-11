@@ -1,6 +1,9 @@
-//! Conversion from AST representation of types to the `ty.rs` representation.
-//! The main routine here is `ast_ty_to_ty()`; each use is parameterized by an
-//! instance of `AstConv`.
+//! HIR lowering: Lowers HIR constructs to `rustc_middle::ty` ones.
+//!
+//! Not to be confused with *AST lowering* which lowers AST constructs to HIR ones.
+//!
+//! The main routine here is `<dyn HirLowerer>::lower_ty()`. The other routines
+//! are defined on `dyn HirLowerer` (see [`HirLowerer`]).
 
 mod bounds;
 mod errors;
@@ -69,7 +72,10 @@ pub enum PredicateFilter {
     SelfAndAssociatedTypeBounds,
 }
 
-pub trait AstConv<'tcx> {
+/// A context which can lower [HIR][hir] constructs to [`rustc_middle::ty`] ones.
+///
+/// This used to be called `AstConv`.
+pub trait HirLowerer<'tcx> {
     fn tcx(&self) -> TyCtxt<'tcx>;
 
     fn item_def_id(&self) -> DefId;
@@ -127,6 +133,7 @@ pub trait AstConv<'tcx> {
     ) -> Ty<'tcx>;
 
     /// Returns `AdtDef` if `ty` is an ADT.
+    ///
     /// Note that `ty` might be a projection type that needs normalization.
     /// This used to get the enum variants in scope of the type.
     /// For example, `Self::A` could refer to an associated type
@@ -141,7 +148,7 @@ pub trait AstConv<'tcx> {
 
     fn record_ty(&self, hir_id: hir::HirId, ty: Ty<'tcx>, span: Span);
 
-    fn astconv(&self) -> &dyn AstConv<'tcx>
+    fn lowerer(&self) -> &dyn HirLowerer<'tcx>
     where
         Self: Sized,
     {
@@ -214,7 +221,8 @@ pub struct GenericArgCountResult {
     pub correct: Result<(), GenericArgCountMismatch>,
 }
 
-pub trait CreateSubstsForGenericArgsCtxt<'a, 'tcx> {
+/// A context which can lower HIR's [`GenericArg`] to `rustc_middle`'s [`ty::GenericArg`].
+pub trait GenericArgsLowerer<'a, 'tcx> {
     fn args_for_def_id(&mut self, def_id: DefId) -> (Option<&'a GenericArgs<'tcx>>, bool);
 
     fn provided_kind(
@@ -231,9 +239,9 @@ pub trait CreateSubstsForGenericArgsCtxt<'a, 'tcx> {
     ) -> ty::GenericArg<'tcx>;
 }
 
-impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
+impl<'o, 'tcx> dyn HirLowerer<'tcx> + 'o {
     #[instrument(level = "debug", skip(self), ret)]
-    pub fn ast_region_to_region(
+    pub fn lower_region(
         &self,
         lifetime: &hir::Lifetime,
         def: Option<&ty::GenericParamDef>,
@@ -290,13 +298,13 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
     /// Given a path `path` that refers to an item `I` with the declared generics `decl_generics`,
     /// returns an appropriate set of generic arguments for this particular reference to `I`.
-    pub fn ast_path_args_for_ty(
+    pub fn lower_path_args_for_ty(
         &self,
         span: Span,
         def_id: DefId,
         item_segment: &hir::PathSegment<'tcx>,
     ) -> GenericArgsRef<'tcx> {
-        let (args, _) = self.create_args_for_ast_path(
+        let (args, _) = self.lower_args_for_path(
             span,
             def_id,
             &[],
@@ -309,7 +317,6 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         if let Some(b) = item_segment.args().bindings.first() {
             prohibit_assoc_ty_binding(self.tcx(), b.span, Some((item_segment, span)));
         }
-
         args
     }
 
@@ -345,7 +352,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     /// type itself: `['a]`. The returned `GenericArgsRef` concatenates these two
     /// lists: `[Vec<u8>, u8, 'a]`.
     #[instrument(level = "debug", skip(self, span), ret)]
-    fn create_args_for_ast_path<'a>(
+    fn lower_args_for_path<'a>(
         &self,
         span: Span,
         def_id: DefId,
@@ -362,7 +369,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
         let tcx = self.tcx();
         let generics = tcx.generics_of(def_id);
-        debug!("generics: {:?}", generics);
+        debug!(?generics);
 
         if generics.has_self {
             if generics.parent.is_some() {
@@ -403,8 +410,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             return (tcx.mk_args(parent_args), arg_count);
         }
 
-        struct SubstsForAstPathCtxt<'a, 'tcx> {
-            astconv: &'a (dyn AstConv<'tcx> + 'a),
+        struct GenericArgsLoweringCtxt<'a, 'tcx> {
+            lowerer: &'a dyn HirLowerer<'tcx>,
             def_id: DefId,
             generic_args: &'a GenericArgs<'tcx>,
             span: Span,
@@ -412,7 +419,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             infer_args: bool,
         }
 
-        impl<'a, 'tcx> CreateSubstsForGenericArgsCtxt<'a, 'tcx> for SubstsForAstPathCtxt<'a, 'tcx> {
+        impl<'a, 'tcx> GenericArgsLowerer<'a, 'tcx> for GenericArgsLoweringCtxt<'a, 'tcx> {
             fn args_for_def_id(&mut self, did: DefId) -> (Option<&'a GenericArgs<'tcx>>, bool) {
                 if did == self.def_id {
                     (Some(self.generic_args), self.infer_args)
@@ -427,7 +434,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 param: &ty::GenericParamDef,
                 arg: &GenericArg<'tcx>,
             ) -> ty::GenericArg<'tcx> {
-                let tcx = self.astconv.tcx();
+                let tcx = self.lowerer.tcx();
 
                 let mut handle_ty_args = |has_default, ty: &hir::Ty<'tcx>| {
                     if has_default {
@@ -446,17 +453,17 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                             },
                         );
                     }
-                    if let (hir::TyKind::Infer, false) = (&ty.kind, self.astconv.allow_ty_infer()) {
+                    if let (hir::TyKind::Infer, false) = (&ty.kind, self.lowerer.allow_ty_infer()) {
                         self.inferred_params.push(ty.span);
                         Ty::new_misc_error(tcx).into()
                     } else {
-                        self.astconv.ast_ty_to_ty(ty).into()
+                        self.lowerer.lower_ty(ty).into()
                     }
                 };
 
                 match (&param.kind, arg) {
                     (GenericParamDefKind::Lifetime, GenericArg::Lifetime(lt)) => {
-                        self.astconv.ast_region_to_region(lt, Some(param)).into()
+                        self.lowerer.lower_region(lt, Some(param)).into()
                     }
                     (&GenericParamDefKind::Type { has_default, .. }, GenericArg::Type(ty)) => {
                         handle_ty_args(has_default, ty)
@@ -475,8 +482,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                             .type_of(param.def_id)
                             .no_bound_vars()
                             .expect("const parameter types cannot be generic");
-                        if self.astconv.allow_ty_infer() {
-                            self.astconv.ct_infer(ty, Some(param), inf.span).into()
+                        if self.lowerer.allow_ty_infer() {
+                            self.lowerer.ct_infer(ty, Some(param), inf.span).into()
                         } else {
                             self.inferred_params.push(inf.span);
                             ty::Const::new_misc_error(tcx, ty).into()
@@ -495,10 +502,10 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 param: &ty::GenericParamDef,
                 infer_args: bool,
             ) -> ty::GenericArg<'tcx> {
-                let tcx = self.astconv.tcx();
+                let tcx = self.lowerer.tcx();
                 match param.kind {
                     GenericParamDefKind::Lifetime => self
-                        .astconv
+                        .lowerer
                         .re_infer(Some(param), self.span)
                         .unwrap_or_else(|| {
                             debug!(?param, "unelided lifetime in signature");
@@ -524,7 +531,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                             }
                             tcx.at(self.span).type_of(param.def_id).instantiate(tcx, args).into()
                         } else if infer_args {
-                            self.astconv.ty_infer(Some(param), self.span).into()
+                            self.lowerer.ty_infer(Some(param), self.span).into()
                         } else {
                             // We've already errored above about the mismatch.
                             Ty::new_misc_error(tcx).into()
@@ -546,7 +553,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                                 .into()
                         } else {
                             if infer_args {
-                                self.astconv.ct_infer(ty, Some(param), self.span).into()
+                                self.lowerer.ct_infer(ty, Some(param), self.span).into()
                             } else {
                                 // We've already errored above about the mismatch.
                                 ty::Const::new_misc_error(tcx, ty).into()
@@ -557,8 +564,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             }
         }
 
-        let mut args_ctx = SubstsForAstPathCtxt {
-            astconv: self,
+        let mut args_ctx = GenericArgsLoweringCtxt {
+            lowerer: self,
             def_id,
             span,
             generic_args,
@@ -611,7 +618,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                     hir::TypeBindingKind::Equality { term } => match term {
                         hir::Term::Ty(ty) => ConvertedBindingKind::Equality(respan(
                             ty.span,
-                            self.ast_ty_to_ty(ty).into(),
+                            self.lower_ty(ty).into(),
                         )),
                         hir::Term::Const(c) => {
                             let span = self.tcx().def_span(c.def_id);
@@ -636,18 +643,15 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         assoc_bindings
     }
 
-    pub fn create_args_for_associated_item(
+    #[instrument(level = "debug", skip(self, parent_args), ret)]
+    pub fn lower_args_for_assoc_item(
         &self,
         span: Span,
         item_def_id: DefId,
         item_segment: &hir::PathSegment<'tcx>,
         parent_args: GenericArgsRef<'tcx>,
     ) -> GenericArgsRef<'tcx> {
-        debug!(
-            "create_args_for_associated_item(span: {:?}, item_def_id: {:?}, item_segment: {:?}",
-            span, item_def_id, item_segment
-        );
-        let (args, _) = self.create_args_for_ast_path(
+        let (args, _) = self.lower_args_for_path(
             span,
             item_def_id,
             parent_args,
@@ -657,11 +661,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             None,
             ty::BoundConstness::NotConst,
         );
-
         if let Some(b) = item_segment.args().bindings.first() {
             prohibit_assoc_ty_binding(self.tcx(), b.span, Some((item_segment, span)));
         }
-
         args
     }
 
@@ -678,7 +680,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     ) -> ty::TraitRef<'tcx> {
         self.prohibit_generics(trait_ref.path.segments.split_last().unwrap().1.iter(), |_| {});
 
-        self.ast_path_to_mono_trait_ref(
+        self.lower_path_to_mono_trait_ref(
             trait_ref.path.span,
             trait_ref.trait_def_id().unwrap_or_else(|| FatalError.raise()),
             self_ty,
@@ -726,7 +728,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         self.prohibit_generics(trait_ref.path.segments.split_last().unwrap().1.iter(), |_| {});
         self.complain_about_internal_fn_trait(span, trait_def_id, trait_segment, false);
 
-        let (generic_args, arg_count) = self.create_args_for_ast_path(
+        let (generic_args, arg_count) = self.lower_args_for_path(
             trait_ref.path.span,
             trait_def_id,
             &[],
@@ -765,7 +767,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             }
 
             // Specify type to assert that error was already reported in `Err` case.
-            let _: Result<_, ErrorGuaranteed> = self.add_predicates_for_ast_type_binding(
+            let _: Result<_, ErrorGuaranteed> = self.lower_type_bindings_to_predicates(
                 trait_ref.hir_ref_id,
                 poly_trait_ref,
                 binding,
@@ -783,17 +785,17 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         arg_count
     }
 
-    fn ast_path_to_mono_trait_ref(
+    fn lower_path_to_mono_trait_ref(
         &self,
         span: Span,
         trait_def_id: DefId,
         self_ty: Ty<'tcx>,
         trait_segment: &hir::PathSegment<'tcx>,
         is_impl: bool,
-        // FIXME(effects) move all host param things in astconv to hir lowering
+        // FIXME(effects): Move all host param things in HIR lowering to AST lowering.
         constness: ty::BoundConstness,
     ) -> ty::TraitRef<'tcx> {
-        let (generic_args, _) = self.create_args_for_ast_trait_ref(
+        let (generic_args, _) = self.lower_args_for_trait_ref(
             span,
             trait_def_id,
             self_ty,
@@ -808,7 +810,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     #[instrument(level = "debug", skip(self, span))]
-    fn create_args_for_ast_trait_ref<'a>(
+    fn lower_args_for_trait_ref<'a>(
         &self,
         span: Span,
         trait_def_id: DefId,
@@ -819,7 +821,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     ) -> (GenericArgsRef<'tcx>, GenericArgCountResult) {
         self.complain_about_internal_fn_trait(span, trait_def_id, trait_segment, is_impl);
 
-        self.create_args_for_ast_path(
+        self.lower_args_for_path(
             span,
             trait_def_id,
             &[],
@@ -831,7 +833,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         )
     }
 
-    fn trait_defines_associated_item_named(
+    fn trait_defines_assoc_item_named(
         &self,
         trait_def_id: DefId,
         assoc_kind: ty::AssocKind,
@@ -843,14 +845,14 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             .is_some()
     }
 
-    fn ast_path_to_ty(
+    fn lower_path_to_ty(
         &self,
         span: Span,
         did: DefId,
         item_segment: &hir::PathSegment<'tcx>,
     ) -> Ty<'tcx> {
         let tcx = self.tcx();
-        let args = self.ast_path_args_for_ty(span, did, item_segment);
+        let args = self.lower_path_args_for_ty(span, did, item_segment);
 
         if let DefKind::TyAlias = tcx.def_kind(did)
             && tcx.type_alias_is_lazy(did)
@@ -865,7 +867,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    fn report_ambiguous_associated_type(
+    fn report_ambiguous_assoc_type(
         &self,
         span: Span,
         types: &[String],
@@ -977,10 +979,11 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         reported
     }
 
-    // Search for a bound on a type parameter which includes the associated item
-    // given by `assoc_name`. `ty_param_def_id` is the `DefId` of the type parameter
-    // This function will fail if there are no suitable bounds or there is
-    // any ambiguity.
+    /// Search for a bound on a type parameter which includes the associated item given by `assoc_name`.
+    ///
+    /// `ty_param_def_id` is the `DefId` of the type parameter.
+    /// This function will fail if there are no suitable bounds or there is any ambiguity.
+    #[instrument(level = "debug", skip(self), ret)]
     fn find_bound_for_assoc_item(
         &self,
         ty_param_def_id: LocalDefId,
@@ -989,15 +992,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     ) -> Result<ty::PolyTraitRef<'tcx>, ErrorGuaranteed> {
         let tcx = self.tcx();
 
-        debug!(
-            "find_bound_for_assoc_item(ty_param_def_id={:?}, assoc_name={:?}, span={:?})",
-            ty_param_def_id, assoc_name, span,
-        );
-
         let predicates =
             &self.get_type_parameter_bounds(span, ty_param_def_id, assoc_name).predicates;
-
-        debug!("find_bound_for_assoc_item: predicates={:#?}", predicates);
+        debug!(?predicates);
 
         let param_name = tcx.hir().ty_param_name(ty_param_def_id);
         self.one_bound_for_assoc_item(
@@ -1019,8 +1016,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         )
     }
 
-    // Checks that `bounds` contains exactly one element and reports appropriate
-    // errors otherwise.
+    // FIXME(fmease): This also *resolves* the bound. Update docs!
+    /// Checks that `bounds` contains exactly one element and reports appropriate errors otherwise.
     #[instrument(level = "debug", skip(self, all_candidates, ty_param_name, binding), ret)]
     fn one_bound_for_assoc_item<I>(
         &self,
@@ -1037,9 +1034,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     {
         let tcx = self.tcx();
 
-        let mut matching_candidates = all_candidates().filter(|r| {
-            self.trait_defines_associated_item_named(r.def_id(), assoc_kind, assoc_name)
-        });
+        let mut matching_candidates = all_candidates()
+            .filter(|r| self.trait_defines_assoc_item_named(r.def_id(), assoc_kind, assoc_name));
 
         let Some(bound) = matching_candidates.next() else {
             let reported = self.complain_about_assoc_item_not_found(
@@ -1138,16 +1134,17 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         Ok(bound)
     }
 
-    // Create a type from a path to an associated type or to an enum variant.
-    // For a path `A::B::C::D`, `qself_ty` and `qself_def` are the type and def for `A::B::C`
-    // and item_segment is the path segment for `D`. We return a type and a def for
-    // the whole path.
-    // Will fail except for `T::A` and `Self::A`; i.e., if `qself_ty`/`qself_def` are not a type
-    // parameter or `Self`.
+    /// Create a type from a path to an associated type or to an enum variant.
+    ///
+    /// For a path `A::B::C::D`, `qself_ty` and `qself` are the type and def for `A::B::C`
+    /// and item_segment is the path segment for `D`. We return a type and a def for
+    /// the whole path.
+    ///
+    /// Will fail except for `T::A` and `Self::A`; i.e., if `qself_ty`/`qself` are not a type
+    /// parameter or `Self`.
     // NOTE: When this function starts resolving `Trait::AssocTy` successfully
     // it should also start reporting the `BARE_TRAIT_OBJECTS` lint.
-    #[instrument(level = "debug", skip(self, hir_ref_id, span, qself, assoc_segment), fields(assoc_ident=?assoc_segment.ident), ret)]
-    pub fn associated_path_to_ty(
+    pub fn lower_assoc_path_to_ty(
         &self,
         hir_ref_id: hir::HirId,
         span: Span,
@@ -1156,7 +1153,10 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         assoc_segment: &hir::PathSegment<'tcx>,
         permit_variants: bool,
     ) -> Result<(Ty<'tcx>, DefKind, DefId), ErrorGuaranteed> {
+        let _guard = tracing::debug_span!("lower_assoc_path_to_ty").entered();
+        debug!(%qself_ty, ?assoc_segment.ident);
         let tcx = self.tcx();
+
         let assoc_ident = assoc_segment.ident;
         let qself_res = if let hir::TyKind::Path(hir::QPath::Resolved(_, path)) = &qself.kind {
             path.res
@@ -1379,7 +1379,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                         self.probe_traits_that_match_assoc_ty(qself_ty, assoc_ident);
 
                     // Don't print `ty::Error` to the user.
-                    self.report_ambiguous_associated_type(
+                    self.report_ambiguous_assoc_type(
                         span,
                         &[qself_ty.to_string()],
                         &traits,
@@ -1441,8 +1441,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         // Don't attempt to look up inherent associated types when the feature is not enabled.
         // Theoretically it'd be fine to do so since we feature-gate their definition site.
         // However, due to current limitations of the implementation (caused by us performing
-        // selection in AstConv), IATs can lead to cycle errors (#108491, #110106) which mask the
-        // feature-gate error, needlessly confusing users that use IATs by accident (#113265).
+        // selection during HIR lowering instead of in the trait solver), IATs can lead to cycle
+        // errors (#108491, #110106) which mask the feature-gate error, needlessly confusing users
+        // who use IATs by accident (#113265).
         if !tcx.features().inherent_associated_types {
             return Ok(None);
         }
@@ -1501,7 +1502,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         // `create_args_for_associated_item`. Modify the latter instead (or sth. similar) to
         // not require the parent args logic.
         let parent_args = ty::GenericArgs::identity_for_item(tcx, impl_);
-        let args = self.create_args_for_associated_item(span, assoc_item, segment, parent_args);
+        let args = self.lower_args_for_assoc_item(span, assoc_item, segment, parent_args);
         let args = tcx.mk_args_from_iter(
             std::iter::once(ty::GenericArg::from(self_ty))
                 .chain(args.into_iter().skip(parent_args.len())),
@@ -1699,7 +1700,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             .collect()
     }
 
-    fn qpath_to_ty(
+    fn lower_qpath_to_ty(
         &self,
         span: Span,
         opt_self_ty: Option<Ty<'tcx>>,
@@ -1708,25 +1709,23 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         item_segment: &hir::PathSegment<'tcx>,
         constness: ty::BoundConstness,
     ) -> Ty<'tcx> {
+        let _guard = tracing::debug_span!("lower_qpath_to_ty").entered();
         let tcx = self.tcx();
 
         let trait_def_id = tcx.parent(item_def_id);
-
-        debug!("qpath_to_ty: trait_def_id={:?}", trait_def_id);
+        debug!(?trait_def_id);
 
         let Some(self_ty) = opt_self_ty else {
             let path_str = tcx.def_path_str(trait_def_id);
 
             let def_id = self.item_def_id();
-
-            debug!("qpath_to_ty: self.item_def_id()={:?}", def_id);
+            debug!(item_def_id = ?def_id);
 
             let parent_def_id = def_id
                 .as_local()
                 .map(|def_id| tcx.local_def_id_to_hir_id(def_id))
                 .map(|hir_id| tcx.hir().get_parent_item(hir_id).to_def_id());
-
-            debug!("qpath_to_ty: parent_def_id={:?}", parent_def_id);
+            debug!(?parent_def_id);
 
             // If the trait in segment is the same as the trait defining the item,
             // use the `<Self as ..>` syntax in the error.
@@ -1753,7 +1752,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             // FIXME: also look at `tcx.generics_of(self.item_def_id()).params` any that
             // references the trait. Relevant for the first case in
             // `src/test/ui/associated-types/associated-types-in-ambiguous-context.rs`
-            let reported = self.report_ambiguous_associated_type(
+            let reported = self.report_ambiguous_assoc_type(
                 span,
                 &type_names,
                 &[path_str],
@@ -1761,10 +1760,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             );
             return Ty::new_error(tcx, reported);
         };
+        debug!(?self_ty);
 
-        debug!("qpath_to_ty: self_type={:?}", self_ty);
-
-        let trait_ref = self.ast_path_to_mono_trait_ref(
+        let trait_ref = self.lower_path_to_mono_trait_ref(
             span,
             trait_def_id,
             self_ty,
@@ -1772,11 +1770,10 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             false,
             constness,
         );
+        debug!(?trait_ref);
 
         let item_args =
-            self.create_args_for_associated_item(span, item_def_id, item_segment, trait_ref.args);
-
-        debug!("qpath_to_ty: trait_ref={:?}", trait_ref);
+            self.lower_args_for_assoc_item(span, item_def_id, item_segment, trait_ref.args);
 
         Ty::new_projection(tcx, item_def_id, item_args)
     }
@@ -2019,20 +2016,17 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         path_segs
     }
 
-    /// Check a type `Path` and convert it to a `Ty`.
-    pub fn res_to_ty(
+    /// Check a type `Path` and lower it to a `Ty`.
+    pub fn lower_res_to_ty(
         &self,
         opt_self_ty: Option<Ty<'tcx>>,
         path: &hir::Path<'tcx>,
         hir_id: hir::HirId,
         permit_variants: bool,
     ) -> Ty<'tcx> {
+        let _guard = tracing::debug_span!("lower_res_to_ty").entered();
+        debug!(?path.res, ?opt_self_ty, ?path.segments);
         let tcx = self.tcx();
-
-        debug!(
-            "res_to_ty(res={:?}, opt_self_ty={:?}, path_segments={:?})",
-            path.res, opt_self_ty, path.segments
-        );
 
         let span = path.span;
         match path.res {
@@ -2043,7 +2037,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 self.prohibit_generics(item_segment.1.iter(), |err| {
                     err.note("`impl Trait` types can't have type parameters");
                 });
-                let args = self.ast_path_args_for_ty(span, did, item_segment.0);
+                let args = self.lower_path_args_for_ty(span, did, item_segment.0);
                 Ty::new_opaque(tcx, did, args)
             }
             Res::Def(
@@ -2056,7 +2050,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             ) => {
                 assert_eq!(opt_self_ty, None);
                 self.prohibit_generics(path.segments.split_last().unwrap().1.iter(), |_| {});
-                self.ast_path_to_ty(span, did, path.segments.last().unwrap())
+                self.lower_path_to_ty(span, did, path.segments.last().unwrap())
             }
             Res::Def(kind @ DefKind::Variant, def_id) if permit_variants => {
                 // Convert "variant type" as if it were a real type.
@@ -2077,7 +2071,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 );
 
                 let PathSeg(def_id, index) = path_segs.last().unwrap();
-                self.ast_path_to_ty(span, *def_id, &path.segments[*index])
+                self.lower_path_to_ty(span, *def_id, &path.segments[*index])
             }
             Res::Def(DefKind::TyParam, def_id) => {
                 assert_eq!(opt_self_ty, None);
@@ -2215,7 +2209,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                 } else {
                     ty::BoundConstness::NotConst
                 };
-                self.qpath_to_ty(
+                self.lower_qpath_to_ty(
                     span,
                     opt_self_ty,
                     def_id,
@@ -2260,8 +2254,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    // Converts a hir id corresponding to a type parameter to
-    // a early-bound `ty::Param` or late-bound `ty::Bound`.
+    /// Lower a `HirId` corresponding to a type parameter to an early-bound
+    /// [`ty::Param`] or late-bound [`ty::Bound`].
     pub(crate) fn hir_id_to_bound_ty(&self, hir_id: hir::HirId) -> Ty<'tcx> {
         let tcx = self.tcx();
         match tcx.named_bound_var(hir_id) {
@@ -2285,8 +2279,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    // Converts a hir id corresponding to a const parameter to
-    // a early-bound `ConstKind::Param` or late-bound `ConstKind::Bound`.
+    /// Converts a hir id corresponding to a const parameter to an early-bound
+    /// [`ty::ConstKind::Param`] or late-bound [`ty::ConstKind::Bound`].
     pub(crate) fn hir_id_to_bound_const(
         &self,
         hir_id: hir::HirId,
@@ -2311,16 +2305,12 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    /// Parses the programmer's textual representation of a type into our
-    /// internal notion of a type.
-    pub fn ast_ty_to_ty(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
-        self.ast_ty_to_ty_inner(ast_ty, false, false)
+    pub fn lower_ty(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
+        self.lower_ty_inner(ast_ty, false, false)
     }
 
-    /// Parses the programmer's textual representation of a type into our
-    /// internal notion of a type. This is meant to be used within a path.
-    pub fn ast_ty_to_ty_in_path(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
-        self.ast_ty_to_ty_inner(ast_ty, false, true)
+    pub fn lower_ty_in_path(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
+        self.lower_ty_inner(ast_ty, false, true)
     }
 
     fn check_delegation_constraints(&self, sig_id: DefId, span: Span, emit: bool) -> bool {
@@ -2431,41 +2421,45 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    /// Turns a `hir::Ty` into a `Ty`. For diagnostics' purposes we keep track of whether trait
-    /// objects are borrowed like `&dyn Trait` to avoid emitting redundant errors.
+    /// Lowers a [`hir::Ty`] to a [`Ty`].
+    ///
+    /// For diagnostics' purposes we keep track of whether trait objects are
+    /// borrowed like `&dyn Trait` to avoid emitting redundant errors.
     #[instrument(level = "debug", skip(self), ret)]
-    fn ast_ty_to_ty_inner(
-        &self,
-        ast_ty: &hir::Ty<'tcx>,
-        borrowed: bool,
-        in_path: bool,
-    ) -> Ty<'tcx> {
+    fn lower_ty_inner(&self, ast_ty: &hir::Ty<'tcx>, borrowed: bool, in_path: bool) -> Ty<'tcx> {
         let tcx = self.tcx();
 
         let result_ty = match &ast_ty.kind {
             hir::TyKind::InferDelegation(sig_id, idx) => {
                 self.ty_from_delegation(*sig_id, *idx, ast_ty.span)
             }
-            hir::TyKind::Slice(ty) => Ty::new_slice(tcx, self.ast_ty_to_ty(ty)),
+            hir::TyKind::Slice(ty) => Ty::new_slice(tcx, self.lower_ty(ty)),
             hir::TyKind::Ptr(mt) => {
-                Ty::new_ptr(tcx, ty::TypeAndMut { ty: self.ast_ty_to_ty(mt.ty), mutbl: mt.mutbl })
+                Ty::new_ptr(tcx, ty::TypeAndMut { ty: self.lower_ty(mt.ty), mutbl: mt.mutbl })
             }
             hir::TyKind::Ref(region, mt) => {
-                let r = self.ast_region_to_region(region, None);
+                let r = self.lower_region(region, None);
                 debug!(?r);
-                let t = self.ast_ty_to_ty_inner(mt.ty, true, false);
+                let t = self.lower_ty_inner(mt.ty, true, false);
                 Ty::new_ref(tcx, r, ty::TypeAndMut { ty: t, mutbl: mt.mutbl })
             }
             hir::TyKind::Never => tcx.types.never,
             hir::TyKind::Tup(fields) => {
-                Ty::new_tup_from_iter(tcx, fields.iter().map(|t| self.ast_ty_to_ty(t)))
+                Ty::new_tup_from_iter(tcx, fields.iter().map(|t| self.lower_ty(t)))
             }
             hir::TyKind::BareFn(bf) => {
                 require_c_abi_if_c_variadic(tcx, bf.decl, bf.abi, ast_ty.span);
 
                 Ty::new_fn_ptr(
                     tcx,
-                    self.ty_of_fn(ast_ty.hir_id, bf.unsafety, bf.abi, bf.decl, None, Some(ast_ty)),
+                    self.lower_fn_ty(
+                        ast_ty.hir_id,
+                        bf.unsafety,
+                        bf.abi,
+                        bf.decl,
+                        None,
+                        Some(ast_ty),
+                    ),
                 )
             }
             hir::TyKind::TraitObject(bounds, lifetime, repr) => {
@@ -2486,8 +2480,8 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
             }
             hir::TyKind::Path(hir::QPath::Resolved(maybe_qself, path)) => {
                 debug!(?maybe_qself, ?path);
-                let opt_self_ty = maybe_qself.as_ref().map(|qself| self.ast_ty_to_ty(qself));
-                self.res_to_ty(opt_self_ty, path, ast_ty.hir_id, false)
+                let opt_self_ty = maybe_qself.as_ref().map(|qself| self.lower_ty(qself));
+                self.lower_res_to_ty(opt_self_ty, path, ast_ty.hir_id, false)
             }
             &hir::TyKind::OpaqueDef(item_id, lifetimes, in_trait) => {
                 let opaque_ty = tcx.hir().item(item_id);
@@ -2503,21 +2497,21 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                         } else {
                             local_def_id.to_def_id()
                         };
-                        self.impl_trait_ty_to_ty(def_id, lifetimes, origin, in_trait)
+                        self.lower_impl_trait_ty(def_id, lifetimes, origin, in_trait)
                     }
                     ref i => bug!("`impl Trait` pointed to non-opaque type?? {:#?}", i),
                 }
             }
             hir::TyKind::Path(hir::QPath::TypeRelative(qself, segment)) => {
                 debug!(?qself, ?segment);
-                let ty = self.ast_ty_to_ty_inner(qself, false, true);
-                self.associated_path_to_ty(ast_ty.hir_id, ast_ty.span, ty, qself, segment, false)
+                let ty = self.lower_ty_inner(qself, false, true);
+                self.lower_assoc_path_to_ty(ast_ty.hir_id, ast_ty.span, ty, qself, segment, false)
                     .map(|(ty, _, _)| ty)
                     .unwrap_or_else(|guar| Ty::new_error(tcx, guar))
             }
             &hir::TyKind::Path(hir::QPath::LangItem(lang_item, span)) => {
                 let def_id = tcx.require_lang_item(lang_item, Some(span));
-                let (args, _) = self.create_args_for_ast_path(
+                let (args, _) = self.lower_args_for_path(
                     span,
                     def_id,
                     &[],
@@ -2537,7 +2531,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                     }
                 };
 
-                Ty::new_array_with_const_len(tcx, self.ast_ty_to_ty(ty), length)
+                Ty::new_array_with_const_len(tcx, self.lower_ty(ty), length)
             }
             hir::TyKind::Typeof(e) => tcx.type_of(e.def_id).instantiate_identity(),
             hir::TyKind::Infer => {
@@ -2555,19 +2549,18 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     #[instrument(level = "debug", skip(self), ret)]
-    fn impl_trait_ty_to_ty(
+    fn lower_impl_trait_ty(
         &self,
         def_id: DefId,
         lifetimes: &[hir::GenericArg<'_>],
         origin: OpaqueTyOrigin,
         in_trait: bool,
     ) -> Ty<'tcx> {
-        debug!("impl_trait_ty_to_ty(def_id={:?}, lifetimes={:?})", def_id, lifetimes);
         let tcx = self.tcx();
 
         let generics = tcx.generics_of(def_id);
+        debug!(?generics);
 
-        debug!("impl_trait_ty_to_ty: generics={:?}", generics);
         let args = ty::GenericArgs::for_item(tcx, def_id, |param, _| {
             // We use `generics.count() - lifetimes.len()` here instead of `generics.parent_count`
             // since return-position impl trait in trait squashes all of the generics from its source fn
@@ -2588,12 +2581,12 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                         &lifetimes[i]
                     )
                 };
-                self.ast_region_to_region(lifetime, None).into()
+                self.lower_region(lifetime, None).into()
             } else {
                 tcx.mk_param_from_def(param)
             }
         });
-        debug!("impl_trait_ty_to_ty: args={:?}", args);
+        debug!(?args);
 
         if in_trait {
             Ty::new_projection(tcx, def_id, args)
@@ -2602,18 +2595,18 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         }
     }
 
-    pub fn ty_of_arg(&self, ty: &hir::Ty<'tcx>, expected_ty: Option<Ty<'tcx>>) -> Ty<'tcx> {
+    pub fn lower_arg_ty(&self, ty: &hir::Ty<'tcx>, expected_ty: Option<Ty<'tcx>>) -> Ty<'tcx> {
         match ty.kind {
             hir::TyKind::Infer if expected_ty.is_some() => {
                 self.record_ty(ty.hir_id, expected_ty.unwrap(), ty.span);
                 expected_ty.unwrap()
             }
-            _ => self.ast_ty_to_ty(ty),
+            _ => self.lower_ty(ty),
         }
     }
 
     #[instrument(level = "debug", skip(self, hir_id, unsafety, abi, decl, generics, hir_ty), ret)]
-    pub fn ty_of_fn(
+    pub fn lower_fn_ty(
         &self,
         hir_id: hir::HirId,
         unsafety: hir::Unsafety,
@@ -2662,7 +2655,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
 
                 // Only visit the type looking for `_` if we didn't fix the type above
                 visitor.visit_ty(a);
-                self.ty_of_arg(a, None)
+                self.lower_arg_ty(a, None)
             })
             .collect();
 
@@ -2677,7 +2670,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
                     Ty::new_error_with_message(self.tcx(), output.span, suggested_ty.to_string())
                 } else {
                     visitor.visit_ty(output);
-                    self.ast_ty_to_ty(output)
+                    self.lower_ty(output)
                 }
             }
             hir::FnRetTy::DefaultReturn(..) => Ty::new_unit(tcx),
@@ -2763,7 +2756,7 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
         let i = hir.get_parent(fn_hir_id).expect_item().expect_impl();
 
         let trait_ref =
-            self.instantiate_mono_trait_ref(i.of_trait.as_ref()?, self.ast_ty_to_ty(i.self_ty));
+            self.instantiate_mono_trait_ref(i.of_trait.as_ref()?, self.lower_ty(i.self_ty));
 
         let assoc = tcx.associated_items(trait_ref.def_id).find_by_name_and_kind(
             tcx,
@@ -2820,7 +2813,9 @@ impl<'o, 'tcx> dyn AstConv<'tcx> + 'o {
     }
 
     /// Given the bounds on an object, determines what single region bound (if any) we can
-    /// use to summarize this type. The basic idea is that we will use the bound the user
+    /// use to summarize this type.
+    ///
+    /// The basic idea is that we will use the bound the user
     /// provided, if they provided one, and otherwise search the supertypes of trait bounds
     /// for region bounds. It may be that we can derive no bound at all, in which case
     /// we return `None`.
