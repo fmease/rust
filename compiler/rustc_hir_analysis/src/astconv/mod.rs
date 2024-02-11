@@ -2299,14 +2299,14 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
 
     /// Parses the programmer's textual representation of a type into our
     /// internal notion of a type.
-    pub fn lower_ty(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
-        self.lower_ty_inner(ast_ty, false, false)
+    pub fn lower_ty(&self, hir_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
+        self.lower_ty_inner(hir_ty, false, false)
     }
 
     /// Parses the programmer's textual representation of a type into our
     /// internal notion of a type. This is meant to be used within a path.
-    pub fn lower_ty_in_path(&self, ast_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
-        self.lower_ty_inner(ast_ty, false, true)
+    pub fn lower_ty_in_path(&self, hir_ty: &hir::Ty<'tcx>) -> Ty<'tcx> {
+        self.lower_ty_inner(hir_ty, false, true)
     }
 
     fn check_delegation_constraints(&self, sig_id: DefId, span: Span, emit: bool) -> bool {
@@ -2422,12 +2422,12 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
     /// For diagnostics' purposes we keep track of whether trait objects are
     /// borrowed like `&dyn Trait` to avoid emitting redundant errors.
     #[instrument(level = "debug", skip(self), ret)]
-    fn lower_ty_inner(&self, ast_ty: &hir::Ty<'tcx>, borrowed: bool, in_path: bool) -> Ty<'tcx> {
+    fn lower_ty_inner(&self, hir_ty: &hir::Ty<'tcx>, borrowed: bool, in_path: bool) -> Ty<'tcx> {
         let tcx = self.tcx();
 
-        let result_ty = match &ast_ty.kind {
+        let result_ty = match &hir_ty.kind {
             hir::TyKind::InferDelegation(sig_id, idx) => {
-                self.lower_delegation_ty(*sig_id, *idx, ast_ty.span)
+                self.lower_delegation_ty(*sig_id, *idx, hir_ty.span)
             }
             hir::TyKind::Slice(ty) => Ty::new_slice(tcx, self.lower_ty(ty)),
             hir::TyKind::Ptr(mt) => {
@@ -2444,30 +2444,30 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
                 Ty::new_tup_from_iter(tcx, fields.iter().map(|t| self.lower_ty(t)))
             }
             hir::TyKind::BareFn(bf) => {
-                require_c_abi_if_c_variadic(tcx, bf.decl, bf.abi, ast_ty.span);
+                require_c_abi_if_c_variadic(tcx, bf.decl, bf.abi, hir_ty.span);
 
                 Ty::new_fn_ptr(
                     tcx,
                     self.lower_fn_ty(
-                        ast_ty.hir_id,
+                        hir_ty.hir_id,
                         bf.unsafety,
                         bf.abi,
                         bf.decl,
                         None,
-                        Some(ast_ty),
+                        Some(hir_ty),
                     ),
                 )
             }
             hir::TyKind::TraitObject(bounds, lifetime, repr) => {
-                self.maybe_lint_bare_trait(ast_ty, in_path);
+                self.maybe_lint_bare_trait(hir_ty, in_path);
                 let repr = match repr {
                     TraitObjectSyntax::Dyn | TraitObjectSyntax::None => ty::Dyn,
                     TraitObjectSyntax::DynStar => ty::DynStar,
                 };
 
                 self.lower_object_ty_to_poly_trait_ref(
-                    ast_ty.span,
-                    ast_ty.hir_id,
+                    hir_ty.span,
+                    hir_ty.hir_id,
                     bounds,
                     lifetime,
                     borrowed,
@@ -2477,7 +2477,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
             hir::TyKind::Path(hir::QPath::Resolved(maybe_qself, path)) => {
                 debug!(?maybe_qself, ?path);
                 let opt_self_ty = maybe_qself.as_ref().map(|qself| self.lower_ty(qself));
-                self.lower_res_to_ty(opt_self_ty, path, ast_ty.hir_id, false)
+                self.lower_res_to_ty(opt_self_ty, path, hir_ty.hir_id, false)
             }
             &hir::TyKind::OpaqueDef(item_id, lifetimes, in_trait) => {
                 let opaque_ty = tcx.hir().item(item_id);
@@ -2501,7 +2501,7 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
             hir::TyKind::Path(hir::QPath::TypeRelative(qself, segment)) => {
                 debug!(?qself, ?segment);
                 let ty = self.lower_ty_inner(qself, false, true);
-                self.lower_assoc_path_to_ty(ast_ty.hir_id, ast_ty.span, ty, qself, segment, false)
+                self.lower_assoc_path_to_ty(hir_ty.hir_id, hir_ty.span, ty, qself, segment, false)
                     .map(|(ty, _, _)| ty)
                     .unwrap_or_else(|guar| Ty::new_error(tcx, guar))
             }
@@ -2535,12 +2535,12 @@ impl<'o, 'tcx> dyn HirTyLowerer<'tcx> + 'o {
                 // values in an ExprKind::Closure, or as
                 // the type of local variables. Both of these cases are
                 // handled specially and will not descend into this routine.
-                self.ty_infer(None, ast_ty.span)
+                self.ty_infer(None, hir_ty.span)
             }
             hir::TyKind::Err(guar) => Ty::new_error(tcx, *guar),
         };
 
-        self.record_ty(ast_ty.hir_id, result_ty, ast_ty.span);
+        self.record_ty(hir_ty.hir_id, result_ty, hir_ty.span);
         result_ty
     }
 

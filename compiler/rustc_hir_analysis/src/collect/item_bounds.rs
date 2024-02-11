@@ -17,7 +17,7 @@ use rustc_span::Span;
 fn associated_type_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     assoc_item_def_id: LocalDefId,
-    ast_bounds: &'tcx [hir::GenericBound<'tcx>],
+    hir_bounds: &'tcx [hir::GenericBound<'tcx>],
     span: Span,
 ) -> &'tcx [(ty::Clause<'tcx>, Span)] {
     let item_ty = Ty::new_projection(
@@ -27,9 +27,9 @@ fn associated_type_bounds<'tcx>(
     );
 
     let icx = ItemCtxt::new(tcx, assoc_item_def_id);
-    let mut bounds = icx.lowerer().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
+    let mut bounds = icx.lowerer().compute_bounds(item_ty, hir_bounds, PredicateFilter::All);
     // Associated types are implicitly sized unless a `?Sized` bound is found
-    icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
+    icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, hir_bounds, None, span);
 
     let trait_def_id = tcx.local_parent(assoc_item_def_id);
     let trait_predicates = tcx.trait_explicit_predicates_and_bounds(trait_def_id);
@@ -60,15 +60,15 @@ fn associated_type_bounds<'tcx>(
 fn opaque_type_bounds<'tcx>(
     tcx: TyCtxt<'tcx>,
     opaque_def_id: LocalDefId,
-    ast_bounds: &'tcx [hir::GenericBound<'tcx>],
+    hir_bounds: &'tcx [hir::GenericBound<'tcx>],
     item_ty: Ty<'tcx>,
     span: Span,
 ) -> &'tcx [(ty::Clause<'tcx>, Span)] {
     ty::print::with_no_queries!({
         let icx = ItemCtxt::new(tcx, opaque_def_id);
-        let mut bounds = icx.lowerer().compute_bounds(item_ty, ast_bounds, PredicateFilter::All);
+        let mut bounds = icx.lowerer().compute_bounds(item_ty, hir_bounds, PredicateFilter::All);
         // Opaque types are implicitly sized unless a `?Sized` bound is found
-        icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, ast_bounds, None, span);
+        icx.lowerer().add_implicitly_sized(&mut bounds, item_ty, hir_bounds, None, span);
         debug!(?bounds);
 
         tcx.arena.alloc_from_iter(bounds.clauses())
