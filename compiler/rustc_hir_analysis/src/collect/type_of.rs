@@ -9,8 +9,8 @@ use rustc_middle::ty::{self, ImplTraitInTraitData, IsSuggestable, Ty, TyCtxt, Ty
 use rustc_span::symbol::Ident;
 use rustc_span::{Span, DUMMY_SP};
 
-use crate::astconv::HirTyLowerer;
 use crate::errors::TypeofReservedKeywordUsed;
+use crate::lowering::HirTyLowerer;
 
 use super::bad_placeholder;
 use super::ItemCtxt;

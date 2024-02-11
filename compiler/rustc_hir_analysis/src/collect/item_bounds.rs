@@ -1,5 +1,5 @@
 use super::ItemCtxt;
-use crate::astconv::{HirTyLowerer, PredicateFilter};
+use crate::lowering::{HirTyLowerer, PredicateFilter};
 use rustc_hir as hir;
 use rustc_infer::traits::util;
 use rustc_middle::ty::GenericArgs;

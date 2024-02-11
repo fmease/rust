@@ -1,9 +1,9 @@
-use crate::astconv::{HirTyLowerer, LoweredBindingKind};
 use crate::errors::{
     self, AssocTypeBindingNotAllowed, ManualImplementation, MissingTypeParams,
     ParenthesizedFnTraitExpansion,
 };
 use crate::fluent_generated as fluent;
+use crate::lowering::{HirTyLowerer, LoweredBindingKind};
 use crate::traits::error_reporting::report_object_safety_error;
 use rustc_data_structures::fx::{FxHashMap, FxIndexMap, FxIndexSet};
 use rustc_data_structures::sorted_map::SortedMap;

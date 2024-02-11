@@ -30,7 +30,7 @@ several major phases:
 The type checker is defined into various submodules which are documented
 independently:
 
-- astconv: lowers type-system entities from HIR to `rustc_middle::ty`
+- lowering: lowers type-system entities from HIR to `rustc_middle::ty`
   representation.
 
 - collect: computes the types of each top-level item and enters them into
@@ -82,11 +82,11 @@ extern crate rustc_middle;
 // These are used by Clippy.
 pub mod check;
 
-pub mod astconv;
 pub mod autoderef;
 mod bounds;
 mod check_unused;
 mod coherence;
+pub mod lowering;
 // FIXME: This module shouldn't be public.
 pub mod collect;
 mod constrained_generic_params;
@@ -108,8 +108,8 @@ use rustc_span::{symbol::sym, Span, DUMMY_SP};
 use rustc_target::spec::abi::Abi;
 use rustc_trait_selection::traits;
 
-use astconv::{HirTyLowerer, OnlySelfBounds};
 use bounds::Bounds;
+use lowering::{HirTyLowerer, OnlySelfBounds};
 use rustc_hir::def::DefKind;
 
 rustc_fluent_macro::fluent_messages! { "../messages.ftl" }

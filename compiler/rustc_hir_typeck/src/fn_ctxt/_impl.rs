@@ -11,10 +11,10 @@ use rustc_hir::def::{CtorOf, DefKind, Res};
 use rustc_hir::def_id::DefId;
 use rustc_hir::lang_items::LangItem;
 use rustc_hir::{ExprKind, GenericArg, Node, QPath};
-use rustc_hir_analysis::astconv::generics::{
+use rustc_hir_analysis::lowering::generics::{
     check_generic_arg_count_for_call, create_args_for_parent_generic_args,
 };
-use rustc_hir_analysis::astconv::{
+use rustc_hir_analysis::lowering::{
     ExplicitLateBound, GenericArgCountMismatch, GenericArgCountResult, GenericArgsLowerer,
     HirTyLowerer, IsMethodCall, PathSeg,
 };

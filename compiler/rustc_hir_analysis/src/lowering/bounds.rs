@@ -9,11 +9,11 @@ use rustc_span::{ErrorGuaranteed, Span};
 use rustc_trait_selection::traits;
 use smallvec::SmallVec;
 
-use crate::astconv::{
-    HirTyLowerer, LoweredBinding, LoweredBindingKind, OnlySelfBounds, PredicateFilter,
-};
 use crate::bounds::Bounds;
 use crate::errors;
+use crate::lowering::{
+    HirTyLowerer, LoweredBinding, LoweredBindingKind, OnlySelfBounds, PredicateFilter,
+};
 
 impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
     /// Adds a `Sized` bound to the list of `bounds` unless the HIR bounds contain any of
