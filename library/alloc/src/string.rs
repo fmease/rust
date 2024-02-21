@@ -2550,7 +2550,7 @@ impl ops::DerefMut for String {
 ///
 /// [`Infallible`]: core::convert::Infallible "convert::Infallible"
 #[stable(feature = "str_parse_error", since = "1.5.0")]
-pub type ParseError = core::convert::Infallible;
+pub type ParseError = core::convert::Infallible; // :eyes:
 
 #[cfg(not(no_global_oom_handling))]
 #[stable(feature = "rust1", since = "1.0.0")]

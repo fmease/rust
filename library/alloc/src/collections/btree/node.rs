@@ -126,7 +126,7 @@ impl<K, V> InternalNode<K, V> {
 /// However, `BoxedNode` contains no information as to which of the two types
 /// of nodes it actually contains, and, partially due to this lack of information,
 /// is not a separate type and has no destructor.
-type BoxedNode<K, V> = NonNull<LeafNode<K, V>>;
+type BoxedNode<K, V> = NonNull<LeafNode<K, V>>; // !!!!!!!
 
 // N.B. `NodeRef` is always covariant in `K` and `V`, even when the `BorrowType`
 // is `Mut`. This is technically wrong, but cannot result in any unsafety due to
@@ -195,7 +195,7 @@ pub struct NodeRef<BorrowType, K, V, Type> {
 /// The root node of an owned tree.
 ///
 /// Note that this does not have a destructor, and must be cleaned up manually.
-pub type Root<K, V> = NodeRef<marker::Owned, K, V, marker::LeafOrInternal>;
+pub type Root<K, V> = NodeRef<marker::Owned, K, V, marker::LeafOrInternal>; // !!!!!!!!!
 
 impl<'a, K: 'a, V: 'a, Type> Copy for NodeRef<marker::Immut<'a>, K, V, Type> {}
 impl<'a, K: 'a, V: 'a, Type> Clone for NodeRef<marker::Immut<'a>, K, V, Type> {
