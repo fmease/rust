@@ -204,7 +204,8 @@ where
                     }
                 }
             }
-            ty::Alias(kind @ (ty::Inherent | ty::Weak | ty::Projection), data) => {
+            // [[[[ /!\ CRATER-ONLY /!\ ]]]]
+            ty::Alias(kind @ (ty::Inherent | ty::Projection), data) => {
                 if V::SKIP_ASSOC_TYS {
                     // Visitors searching for minimal visibility/reachability want to
                     // conservatively approximate associated types like `Type::Alias`
@@ -218,8 +219,7 @@ where
                     data.def_id,
                     match kind {
                         ty::Inherent | ty::Projection => "associated type",
-                        ty::Weak => "type alias",
-                        ty::Opaque => unreachable!(),
+                        ty::Weak | ty::Opaque => unreachable!(),
                     },
                     &LazyDefPathStr { def_id: data.def_id, tcx },
                 )?;
@@ -232,6 +232,16 @@ where
                 } else {
                     data.args.iter().try_for_each(|arg| arg.visit_with(self))
                 };
+            }
+            // [[[[ /!\ CRATER-ONLY /!\ ]]]]
+            ty::Alias(ty::Weak, _) => {
+                // FIXME(fmease): Be smarter
+                return ControlFlow::Continue(());
+                // if V::SKIP_ASSOC_TYS {
+                //     return ControlFlow::Continue(());
+                // }
+                // let ty = tcx.peel_off_weak_alias_tys(ty);
+                // return ty.visit_with(self);
             }
             ty::Dynamic(predicates, ..) => {
                 // All traits in the list are considered the "primary" part of the type
