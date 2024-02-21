@@ -59,16 +59,17 @@ pub(super) fn infer_predicates(
                     }
                 }
 
-                DefKind::TyAlias if tcx.type_alias_is_lazy(item_did) => {
-                    insert_required_predicates_to_be_wf(
-                        tcx,
-                        tcx.type_of(item_did).instantiate_identity(),
-                        tcx.def_span(item_did),
-                        &global_inferred_outlives,
-                        &mut item_required_predicates,
-                        &mut explicit_map,
-                    );
-                }
+                // [[[[ /!\ CRATER-ONLY /!\ ]]]]
+                // DefKind::TyAlias if tcx.type_alias_is_lazy(item_did) => {
+                //     insert_required_predicates_to_be_wf(
+                //         tcx,
+                //         tcx.type_of(item_did).instantiate_identity(),
+                //         tcx.def_span(item_did),
+                //         &global_inferred_outlives,
+                //         &mut item_required_predicates,
+                //         &mut explicit_map,
+                //     );
+                // }
 
                 _ => {}
             };
@@ -144,26 +145,27 @@ fn insert_required_predicates_to_be_wf<'tcx>(
                 );
             }
 
-            ty::Alias(ty::Weak, alias) => {
-                // This corresponds to a type like `Type<'a, T>`.
-                // We check inferred and explicit predicates.
-                debug!("Weak");
-                check_inferred_predicates(
-                    tcx,
-                    alias.def_id,
-                    alias.args,
-                    global_inferred_outlives,
-                    required_predicates,
-                );
-                check_explicit_predicates(
-                    tcx,
-                    alias.def_id,
-                    alias.args,
-                    required_predicates,
-                    explicit_map,
-                    None,
-                );
-            }
+            // [[[[ /!\ CRATER-ONLY /!\ ]]]]
+            // ty::Alias(ty::Weak, alias) => {
+            //     // This corresponds to a type like `Type<'a, T>`.
+            //     // We check inferred and explicit predicates.
+            //     debug!("Weak");
+            //     check_inferred_predicates(
+            //         tcx,
+            //         alias.def_id,
+            //         alias.args,
+            //         global_inferred_outlives,
+            //         required_predicates,
+            //     );
+            //     check_explicit_predicates(
+            //         tcx,
+            //         alias.def_id,
+            //         alias.args,
+            //         required_predicates,
+            //         explicit_map,
+            //         None,
+            //     );
+            // }
 
             ty::Dynamic(obj, ..) => {
                 // This corresponds to `dyn Trait<..>`. In this case, we should

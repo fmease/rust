@@ -320,13 +320,13 @@ fn check_item<'tcx>(tcx: TyCtxt<'tcx>, item: &'tcx hir::Item<'tcx>) -> Result<()
             // Do not check the watered-down version of lazy type aliases for well-formedness!
 
             let ty = tcx.type_of(item.owner_id).instantiate_identity();
-            let res = if !ty.references_error() && ty.has_opaque_types() {
-                check_item_type(tcx, def_id, hir_ty.span, UnsizedHandling::Allow)
+            if !ty.references_error() && ty.has_opaque_types() {
+                let res = check_item_type(tcx, def_id, hir_ty.span, UnsizedHandling::Allow);
+                check_variances_for_type_defn(tcx, item, ast_generics);
+                res
             } else {
                 Ok(())
-            };
-            check_variances_for_type_defn(tcx, item, ast_generics);
-            res
+            }
         }
         _ => Ok(()),
     };
