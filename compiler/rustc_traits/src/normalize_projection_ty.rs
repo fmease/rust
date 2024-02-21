@@ -78,18 +78,19 @@ fn normalize_canonicalized_weak_ty<'tcx>(
 
     tcx.infer_ctxt().enter_canonical_trait_query(
         &goal,
-        |ocx, ParamEnvAnd { param_env, value: goal }| {
-            let obligations = tcx.predicates_of(goal.def_id).instantiate_own(tcx, goal.args).map(
-                |(predicate, span)| {
-                    traits::Obligation::new(
-                        tcx,
-                        ObligationCause::dummy_with_span(span),
-                        param_env,
-                        predicate,
-                    )
-                },
-            );
-            ocx.register_obligations(obligations);
+        |_ocx, ParamEnvAnd { param_env: _, value: goal }| {
+            // [[[[ /!\ CRATER-ONLY /!\ ]]]]
+            // let obligations = tcx.predicates_of(goal.def_id).instantiate_own(tcx, goal.args).map(
+            //     |(predicate, span)| {
+            //         traits::Obligation::new(
+            //             tcx,
+            //             ObligationCause::dummy_with_span(span),
+            //             param_env,
+            //             predicate,
+            //         )
+            //     },
+            // );
+            // ocx.register_obligations(obligations);
             let normalized_ty = tcx.type_of(goal.def_id).instantiate(tcx, goal.args);
             Ok(NormalizationResult { normalized_ty })
         },
