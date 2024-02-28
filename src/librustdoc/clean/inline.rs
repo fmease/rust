@@ -310,6 +310,9 @@ pub(crate) fn build_function<'tcx>(
         generics.params.sort_by_key(|param| cx.tcx.def_ident_span(param.def_id).unwrap());
     }
 
+    // FIXME(fmease): @Temporary
+    crate::clean::simplify::move_bounds_to_generic_parameters(&mut generics);
+
     let decl = clean_poly_fn_sig(cx, Some(def_id), sig);
 
     Box::new(clean::Function { decl, generics })

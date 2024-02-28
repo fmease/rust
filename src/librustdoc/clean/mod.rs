@@ -750,7 +750,7 @@ pub(crate) fn clean_generics<'tcx>(
 
 fn clean_ty_generics<'tcx>(
     cx: &mut DocContext<'tcx>,
-    generics: &ty::Generics,
+    generics: &'tcx ty::Generics,
     predicates: ty::GenericPredicates<'tcx>,
     _item_def_id: DefId,
 ) -> Generics {
@@ -787,10 +787,48 @@ fn clean_ty_generics<'tcx>(
     let mut impl_trait_proj =
         FxHashMap::<u32, Vec<(DefId, PathSegment, ty::Binder<'_, ty::Term<'_>>)>>::default();
 
+    let item_span = {
+        if !predicates.predicates.is_empty() {
+            let span = cx.tcx.def_span(_item_def_id);
+            // FIXME: this is not correct if spans come from different expansions!
+            let params_sp = {
+                let mut params = generics.params.iter();
+                if let Some(param) = params.next() {
+                    let mut sp = cx.tcx.def_ident_span(param.def_id).unwrap();
+                    while let Some(param) = params.next() {
+                        sp = sp.to(cx.tcx.def_ident_span(param.def_id).unwrap());
+                    }
+                    sp
+                } else {
+                    None
+                }
+            };
+
+            Some(span)
+        } else {
+            None
+        }
+    };
+
     let where_predicates = predicates
         .predicates
         .iter()
-        .flat_map(|(pred, _)| {
+        .flat_map(|(pred, span)| {
+            if !(span.is_dummy()
+                || span.is_empty()
+                || span.from_expansion()
+                || !cx.tcx.sess.source_map().is_span_accessible(*span))
+            {
+                let mut diag = cx.tcx.dcx().struct_span_warn(*span, format!("pred={pred:?}"));
+
+                if let Some(item_span) = item_span {
+                    diag.span_note(item_span, "span");
+                    diag.note(if item_span.contains(*span) { "<...>" } else { "where ... " });
+                }
+
+                diag.emit();
+            }
+
             let mut projection = None;
             let param_idx = (|| {
                 let bound_p = pred.kind();
