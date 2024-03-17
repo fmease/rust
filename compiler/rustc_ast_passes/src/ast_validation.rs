@@ -83,10 +83,6 @@ struct AstValidator<'a> {
 
     disallow_tilde_const: Option<DisallowTildeConstContext<'a>>,
 
-    /// Used to ban `impl Trait` in path projections like `<impl Iterator>::Item`
-    /// or `Foo::Bar<impl Trait>`
-    is_impl_trait_banned: bool,
-
     lint_buffer: &'a mut LintBuffer,
 }
 
@@ -115,12 +111,6 @@ impl<'a> AstValidator<'a> {
         );
         f(self);
         self.outer_trait_or_trait_impl = old;
-    }
-
-    fn with_banned_impl_trait(&mut self, f: impl FnOnce(&mut Self)) {
-        let old = mem::replace(&mut self.is_impl_trait_banned, true);
-        f(self);
-        self.is_impl_trait_banned = old;
     }
 
     fn with_tilde_const(
@@ -191,37 +181,6 @@ impl<'a> AstValidator<'a> {
                 .with_tilde_const(Some(DisallowTildeConstContext::TraitObject), |this| {
                     visit::walk_ty(this, t)
                 }),
-            TyKind::Path(qself, path) => {
-                // We allow these:
-                //  - `Option<impl Trait>`
-                //  - `option::Option<impl Trait>`
-                //  - `option::Option<T>::Foo<impl Trait>`
-                //
-                // But not these:
-                //  - `<impl Trait>::Foo`
-                //  - `option::Option<impl Trait>::Foo`.
-                //
-                // To implement this, we disallow `impl Trait` from `qself`
-                // (for cases like `<impl Trait>::Foo>`)
-                // but we allow `impl Trait` in `GenericArgs`
-                // iff there are no more PathSegments.
-                if let Some(qself) = qself {
-                    // `impl Trait` in `qself` is always illegal
-                    self.with_banned_impl_trait(|this| this.visit_ty(&qself.ty));
-                }
-
-                // Note that there should be a call to visit_path here,
-                // so if any logic is added to process `Path`s a call to it should be
-                // added both in visit_path and here. This code mirrors visit::walk_path.
-                for (i, segment) in path.segments.iter().enumerate() {
-                    // Allow `impl Trait` iff we're on the final path segment
-                    if i == path.segments.len() - 1 {
-                        self.visit_path_segment(segment);
-                    } else {
-                        self.with_banned_impl_trait(|this| this.visit_path_segment(segment));
-                    }
-                }
-            }
             TyKind::AnonStruct(_, ref fields) | TyKind::AnonUnion(_, ref fields) => {
                 walk_list!(self, visit_struct_field_def, fields)
             }
@@ -715,10 +674,6 @@ impl<'a> AstValidator<'a> {
                 }
             }
             TyKind::ImplTrait(_, bounds) => {
-                if self.is_impl_trait_banned {
-                    self.dcx().emit_err(errors::ImplTraitPath { span: ty.span });
-                }
-
                 if let Some(outer_impl_trait_sp) = self.outer_impl_trait {
                     self.dcx().emit_err(errors::NestedImplTrait {
                         span: ty.span,
@@ -1718,7 +1673,6 @@ pub fn check_crate(
         has_proc_macro_decls: false,
         outer_impl_trait: None,
         disallow_tilde_const: Some(DisallowTildeConstContext::Item),
-        is_impl_trait_banned: false,
         lint_buffer: lints,
     };
     visit::walk_crate(&mut validator, krate);

@@ -3,10 +3,12 @@
 // Here we test behavior of occurrences of `impl Trait` within a path
 // component in that context.
 
+// FIXME(fmease): this is now check-pass :(
+
 pub trait Bar { }
 pub trait Quux<T> { type Assoc; }
 pub fn demo(_: impl Quux<(), Assoc=<() as Quux<impl Bar>>::Assoc>) { }
-//~^ ERROR `impl Trait` is not allowed in path parameters
+//~^ ERROR `impl Trait` is not allowed in paths
 impl<T> Quux<T> for () { type Assoc = u32; }
 
 fn main() { }

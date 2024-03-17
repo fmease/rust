@@ -32,7 +32,9 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         modifiers: Option<ast::TraitBoundModifiers>,
     ) -> hir::QPath<'hir> {
         let qself_position = qself.as_ref().map(|q| q.position);
-        let qself = qself.as_ref().map(|q| self.lower_ty(&q.ty, itctx));
+        let qself = qself
+            .as_ref()
+            .map(|q| self.lower_ty(&q.ty, ImplTraitContext::Disallowed(ImplTraitPosition::Path)));
 
         let partial_res =
             self.resolver.get_partial_res(id).unwrap_or_else(|| PartialRes::new(Res::Err));
@@ -71,14 +73,17 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             res,
             segments: self.arena.alloc_from_iter(p.segments[..proj_start].iter().enumerate().map(
                 |(i, segment)| {
-                    let param_mode = match (qself_position, param_mode) {
+                    let (param_mode, itctx) = match (qself_position, param_mode) {
                         (Some(j), ParamMode::Optional) if i < j => {
-                            // This segment is part of the trait path in a
-                            // qualified path - one of `a`, `b` or `Trait`
-                            // in `<X as a::b::Trait>::T::U::method`.
-                            ParamMode::Explicit
+                            // This segment is part of the trait path in a qualified path:
+                            // One of `a`, `b` or `Trait` in `<X as a::b::Trait>::T::U::method`.
+                            // `impl Trait` is unconditionally disallowed here.
+                            (
+                                ParamMode::Explicit,
+                                ImplTraitContext::Disallowed(ImplTraitPosition::Path),
+                            )
                         }
-                        _ => param_mode,
+                        _ => (param_mode, itctx),
                     };
 
                     let parenthesized_generic_args = match base_res {
@@ -162,6 +167,8 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                 segment,
                 param_mode,
                 ParenthesizedGenericArgs::Err,
+                // Whether `impl Trait` is allowed here depends on the context contrary to
+                // the self type and trait segment paths in qualified paths (see above).
                 itctx,
                 None,
                 None,
