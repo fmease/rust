@@ -27,7 +27,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         qself: &Option<ptr::P<QSelf>>,
         p: &Path,
         param_mode: ParamMode,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         // modifiers of the impl/bound if this is a trait path
         modifiers: Option<ast::TraitBoundModifiers>,
     ) -> hir::QPath<'hir> {
@@ -227,7 +227,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         segment: &PathSegment,
         param_mode: ParamMode,
         parenthesized_generic_args: ParenthesizedGenericArgs,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         constness: Option<ast::BoundConstness>,
         // Additional features ungated with a bound modifier like `async`.
         // This is passed down to the implicit associated type binding in
@@ -381,7 +381,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         &mut self,
         data: &AngleBracketedArgs,
         param_mode: ParamMode,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> (GenericArgsCtor<'hir>, bool) {
         let has_non_lt_args = data.args.iter().any(|arg| match arg {
             AngleBracketedArg::Arg(ast::GenericArg::Lifetime(_))
@@ -396,10 +396,18 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                 AngleBracketedArg::Constraint(_) => None,
             })
             .collect();
-        let bindings = self.arena.alloc_from_iter(data.args.iter().filter_map(|arg| match arg {
-            AngleBracketedArg::Constraint(c) => Some(self.lower_assoc_ty_constraint(c, itctx)),
-            AngleBracketedArg::Arg(_) => None,
-        }));
+        let bindings = {
+            // FIXME(fmease): explainer
+            let itctx = match itctx {
+                ImplTraitContext::Disallowed(ImplTraitPosition::ImplTrait { outer }) => *outer,
+                itctx => itctx,
+            };
+
+            self.arena.alloc_from_iter(data.args.iter().filter_map(|arg| match arg {
+                AngleBracketedArg::Constraint(c) => Some(self.lower_assoc_ty_constraint(c, itctx)),
+                AngleBracketedArg::Arg(_) => None,
+            }))
+        };
         let ctor = GenericArgsCtor {
             args,
             bindings,
@@ -412,7 +420,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_parenthesized_parameter_data(
         &mut self,
         data: &ParenthesizedArgs,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         bound_modifier_allowed_features: Option<Lrc<[Symbol]>>,
     ) -> (GenericArgsCtor<'hir>, bool) {
         // Switch to `PassThrough` mode for anonymous lifetimes; this

@@ -76,11 +76,6 @@ struct AstValidator<'a> {
 
     has_proc_macro_decls: bool,
 
-    /// Used to ban nested `impl Trait`, e.g., `impl Into<impl Debug>`.
-    /// Nested `impl Trait` _is_ allowed in associated type position,
-    /// e.g., `impl Iterator<Item = impl Debug>`.
-    outer_impl_trait: Option<Span>,
-
     disallow_tilde_const: Option<DisallowTildeConstContext<'a>>,
 
     lint_buffer: &'a mut LintBuffer,
@@ -165,18 +160,9 @@ impl<'a> AstValidator<'a> {
         Err(errors::WhereClauseBeforeTypeAlias { span, sugg })
     }
 
-    fn with_impl_trait(&mut self, outer: Option<Span>, f: impl FnOnce(&mut Self)) {
-        let old = mem::replace(&mut self.outer_impl_trait, outer);
-        f(self);
-        self.outer_impl_trait = old;
-    }
-
     // Mirrors `visit::walk_ty`, but tracks relevant state.
     fn walk_ty(&mut self, t: &'a Ty) {
         match &t.kind {
-            TyKind::ImplTrait(..) => {
-                self.with_impl_trait(Some(t.span), |this| visit::walk_ty(this, t))
-            }
             TyKind::TraitObject(..) => self
                 .with_tilde_const(Some(DisallowTildeConstContext::TraitObject), |this| {
                     visit::walk_ty(this, t)
@@ -674,14 +660,6 @@ impl<'a> AstValidator<'a> {
                 }
             }
             TyKind::ImplTrait(_, bounds) => {
-                if let Some(outer_impl_trait_sp) = self.outer_impl_trait {
-                    self.dcx().emit_err(errors::NestedImplTrait {
-                        span: ty.span,
-                        outer: outer_impl_trait_sp,
-                        inner: ty.span,
-                    });
-                }
-
                 if !bounds.iter().any(|b| matches!(b, GenericBound::Trait(..))) {
                     self.dcx().emit_err(errors::AtLeastOneTrait { span: ty.span });
                 }
@@ -1133,25 +1111,21 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             GenericArgs::AngleBracketed(data) => {
                 self.check_generic_args_before_constraints(data);
 
+                // FIXME: use walk method if available
                 for arg in &data.args {
                     match arg {
                         AngleBracketedArg::Arg(arg) => self.visit_generic_arg(arg),
-                        // Type bindings such as `Item = impl Debug` in `Iterator<Item = Debug>`
-                        // are allowed to contain nested `impl Trait`.
                         AngleBracketedArg::Constraint(constraint) => {
-                            self.with_impl_trait(None, |this| {
-                                this.visit_assoc_constraint(constraint);
-                            });
+                            self.visit_assoc_constraint(constraint);
                         }
                     }
                 }
             }
+            // FIXME: use walk method if available
             GenericArgs::Parenthesized(data) => {
                 walk_list!(self, visit_ty, &data.inputs);
                 if let FnRetTy::Ty(ty) = &data.output {
-                    // `-> Foo` syntax is essentially an associated type binding,
-                    // so it is also allowed to contain nested `impl Trait`.
-                    self.with_impl_trait(None, |this| this.visit_ty(ty));
+                    self.visit_ty(ty);
                 }
             }
         }
@@ -1671,7 +1645,6 @@ pub fn check_crate(
         extern_mod: None,
         outer_trait_or_trait_impl: None,
         has_proc_macro_decls: false,
-        outer_impl_trait: None,
         disallow_tilde_const: Some(DisallowTildeConstContext::Item),
         lint_buffer: lints,
     };

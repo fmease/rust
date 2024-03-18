@@ -255,7 +255,7 @@ impl ResolverAstLowering {
 /// Context of `impl Trait` in code, which determines whether it is allowed in an HIR subtree,
 /// and if so, what meaning it has.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum ImplTraitContext {
+enum ImplTraitContext<'a> {
     /// Treat `impl Trait` as shorthand for a new universal generic parameter.
     /// Example: `fn foo(x: impl Debug)`, where `impl Debug` is conceptually
     /// equivalent to a fresh universal parameter like `fn foo<T: Debug>(x: T)`.
@@ -274,14 +274,14 @@ enum ImplTraitContext {
         fn_kind: Option<FnDeclKind>,
     },
     /// `impl Trait` is unstably accepted in this position.
-    FeatureGated(ImplTraitPosition, Symbol),
+    FeatureGated(ImplTraitPosition<'a>, Symbol),
     /// `impl Trait` is not accepted in this position.
-    Disallowed(ImplTraitPosition),
+    Disallowed(ImplTraitPosition<'a>),
 }
 
 /// Position in which `impl Trait` is disallowed.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum ImplTraitPosition {
+enum ImplTraitPosition<'a> {
     Path,
     Variable,
     Trait,
@@ -303,9 +303,10 @@ enum ImplTraitPosition {
     Cast,
     ImplSelf,
     OffsetOf,
+    ImplTrait { outer: &'a ImplTraitContext<'a> },
 }
 
-impl std::fmt::Display for ImplTraitPosition {
+impl std::fmt::Display for ImplTraitPosition<'_> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
             ImplTraitPosition::Path => "paths",
@@ -329,6 +330,7 @@ impl std::fmt::Display for ImplTraitPosition {
             ImplTraitPosition::Cast => "cast expression types",
             ImplTraitPosition::ImplSelf => "impl headers",
             ImplTraitPosition::OffsetOf => "`offset_of!` parameters",
+            ImplTraitPosition::ImplTrait { .. } => "`impl Trait`",
         };
 
         write!(f, "{name}")
@@ -979,7 +981,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_assoc_ty_constraint(
         &mut self,
         constraint: &AssocConstraint,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::TypeBinding<'hir> {
         debug!("lower_assoc_ty_constraint(constraint={:?}, itctx={:?})", constraint, itctx);
         // lower generic arguments of identifier in constraint
@@ -1129,7 +1131,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_generic_arg(
         &mut self,
         arg: &ast::GenericArg,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::GenericArg<'hir> {
         match arg {
             ast::GenericArg::Lifetime(lt) => GenericArg::Lifetime(self.lower_lifetime(lt)),
@@ -1208,7 +1210,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     }
 
     #[instrument(level = "debug", skip(self))]
-    fn lower_ty(&mut self, t: &Ty, itctx: ImplTraitContext) -> &'hir hir::Ty<'hir> {
+    fn lower_ty(&mut self, t: &Ty, itctx: ImplTraitContext<'_>) -> &'hir hir::Ty<'hir> {
         self.arena.alloc(self.lower_ty_direct(t, itctx))
     }
 
@@ -1218,7 +1220,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         qself: &Option<ptr::P<QSelf>>,
         path: &Path,
         param_mode: ParamMode,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::Ty<'hir> {
         // Check whether we should interpret this as a bare trait object.
         // This check mirrors the one in late resolution. We only introduce this special case in
@@ -1260,7 +1262,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         self.ty(span, hir::TyKind::Tup(tys))
     }
 
-    fn lower_ty_direct(&mut self, t: &Ty, itctx: ImplTraitContext) -> hir::Ty<'hir> {
+    fn lower_ty_direct(&mut self, t: &Ty, itctx: ImplTraitContext<'_>) -> hir::Ty<'hir> {
         let kind = match &t.kind {
             TyKind::Infer => hir::TyKind::Infer,
             TyKind::Err(guar) => hir::TyKind::Err(*guar),
@@ -1407,7 +1409,9 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
                         *def_node_id,
                         bounds,
                         fn_kind,
-                        itctx,
+                        ImplTraitContext::Disallowed(ImplTraitPosition::ImplTrait {
+                            outer: &itctx,
+                        }),
                     ),
                     ImplTraitContext::Universal => {
                         let span = t.span;
@@ -1516,7 +1520,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         opaque_ty_node_id: NodeId,
         bounds: &GenericBounds,
         fn_kind: Option<FnDeclKind>,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::TyKind<'hir> {
         // Make sure we know that some funky desugaring has been going on here.
         // This is a first: there is code in other places like for loop
@@ -1924,7 +1928,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         output: &FnRetTy,
         coro: CoroutineKind,
         opaque_ty_span: Span,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::GenericBound<'hir> {
         // Compute the `T` in `Future<Output = T>` from the return type.
         let output_ty = match output {
@@ -1972,7 +1976,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_param_bound(
         &mut self,
         tpb: &GenericBound,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::GenericBound<'hir> {
         match tpb {
             GenericBound::Trait(p, modifiers) => hir::GenericBound::Trait(
@@ -2151,7 +2155,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         &mut self,
         modifiers: ast::TraitBoundModifiers,
         p: &TraitRef,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::TraitRef<'hir> {
         let path = match self.lower_qpath(
             p.ref_id,
@@ -2171,7 +2175,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_poly_trait_ref(
         &mut self,
         p: &PolyTraitRef,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         modifiers: ast::TraitBoundModifiers,
     ) -> hir::PolyTraitRef<'hir> {
         let bound_generic_params =
@@ -2180,7 +2184,7 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
         hir::PolyTraitRef { bound_generic_params, trait_ref, span: self.lower_span(p.span) }
     }
 
-    fn lower_mt(&mut self, mt: &MutTy, itctx: ImplTraitContext) -> hir::MutTy<'hir> {
+    fn lower_mt(&mut self, mt: &MutTy, itctx: ImplTraitContext<'_>) -> hir::MutTy<'hir> {
         hir::MutTy { ty: self.lower_ty(&mt.ty, itctx), mutbl: mt.mutbl }
     }
 
@@ -2188,16 +2192,17 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
     fn lower_param_bounds(
         &mut self,
         bounds: &[GenericBound],
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
     ) -> hir::GenericBounds<'hir> {
         self.arena.alloc_from_iter(self.lower_param_bounds_mut(bounds, itctx))
     }
 
-    fn lower_param_bounds_mut<'s>(
+    fn lower_param_bounds_mut<'s, 'c>(
         &'s mut self,
         bounds: &'s [GenericBound],
-        itctx: ImplTraitContext,
-    ) -> impl Iterator<Item = hir::GenericBound<'hir>> + Captures<'s> + Captures<'a> {
+        itctx: ImplTraitContext<'c>,
+    ) -> impl Iterator<Item = hir::GenericBound<'hir>> + Captures<'s> + Captures<'c> + Captures<'a>
+    {
         bounds.iter().map(move |bound| self.lower_param_bound(bound, itctx))
     }
 
@@ -2232,7 +2237,9 @@ impl<'a, 'hir> LoweringContext<'a, 'hir> {
             bounds,
             /* colon_span */ None,
             span,
-            ImplTraitContext::Universal,
+            ImplTraitContext::Disallowed(ImplTraitPosition::ImplTrait {
+                outer: &ImplTraitContext::Universal,
+            }),
             hir::PredicateOrigin::ImplTrait,
         );
 

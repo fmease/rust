@@ -470,7 +470,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         ty: &Ty,
         span: Span,
         body: Option<&Expr>,
-        impl_trait_position: ImplTraitPosition,
+        impl_trait_position: ImplTraitPosition<'_>,
     ) -> (&'hir hir::Ty<'hir>, hir::BodyId) {
         let ty = self.lower_ty(ty, ImplTraitContext::Disallowed(impl_trait_position));
         (ty, self.lower_const_body(span, body))
@@ -1418,7 +1418,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         generics: &Generics,
         constness: Const,
         parent_node_id: NodeId,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         f: impl FnOnce(&mut Self) -> T,
     ) -> (&'hir hir::Generics<'hir>, T) {
         debug_assert!(self.impl_trait_defs.is_empty());
@@ -1624,7 +1624,7 @@ impl<'hir> LoweringContext<'_, 'hir> {
         bounds: &[GenericBound],
         colon_span: Option<Span>,
         parent_span: Span,
-        itctx: ImplTraitContext,
+        itctx: ImplTraitContext<'_>,
         origin: PredicateOrigin,
     ) -> Option<hir::WherePredicate<'hir>> {
         // Do not create a clause if we do not have anything inside it.

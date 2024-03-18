@@ -398,17 +398,6 @@ pub struct TraitObjectBound {
 }
 
 #[derive(Diagnostic)]
-#[diag(ast_passes_nested_impl_trait, code = E0666)]
-pub struct NestedImplTrait {
-    #[primary_span]
-    pub span: Span,
-    #[label(ast_passes_outer)]
-    pub outer: Span,
-    #[label(ast_passes_inner)]
-    pub inner: Span,
-}
-
-#[derive(Diagnostic)]
 #[diag(ast_passes_at_least_one_trait)]
 pub struct AtLeastOneTrait {
     #[primary_span]

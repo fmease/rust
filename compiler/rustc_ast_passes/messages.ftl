@@ -189,10 +189,6 @@ ast_passes_negative_bound_not_supported =
 ast_passes_negative_bound_with_parenthetical_notation =
     parenthetical notation may not be used for negative bounds
 
-ast_passes_nested_impl_trait = nested `impl Trait` is not allowed
-    .outer = outer `impl Trait`
-    .inner = nested `impl Trait` here
-
 ast_passes_nested_lifetimes = nested quantification of lifetimes
 
 ast_passes_nomangle_ascii = `#[no_mangle]` requires ASCII identifier
