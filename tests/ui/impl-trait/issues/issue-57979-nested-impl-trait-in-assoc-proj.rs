@@ -7,6 +7,6 @@ pub trait Foo<T> { }
 pub trait Bar { }
 pub trait Quux { type Assoc; }
 pub fn demo(_: impl Quux<Assoc=impl Foo<impl Bar>>) { }
-//~^ ERROR nested `impl Trait` is not allowed
+//~^ ERROR `impl Trait` is not allowed in `impl Trait`
 
 fn main() { }

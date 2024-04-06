@@ -4,20 +4,20 @@ use std::fmt::Debug;
 fn fine(x: impl Into<u32>) -> impl Into<u32> { x }
 
 fn bad_in_ret_position(x: impl Into<u32>) -> impl Into<impl Debug> { x }
-//~^ ERROR nested `impl Trait` is not allowed
+//~^ ERROR `impl Trait` is not allowed in `impl Trait`
 //~| ERROR the trait bound `impl Debug: From<impl Into<u32>>` is not satisfied
 
 fn bad_in_fn_syntax(x: fn() -> impl Into<impl Debug>) {}
-//~^ ERROR nested `impl Trait` is not allowed
+//~^ ERROR `impl Trait` is not allowed in `impl Trait`
 //~| `impl Trait` is not allowed in `fn` pointer
 
 fn bad_in_arg_position(_: impl Into<impl Debug>) { }
-//~^ ERROR nested `impl Trait` is not allowed
+//~^ ERROR `impl Trait` is not allowed in `impl Trait`
 
 struct X;
 impl X {
     fn bad(x: impl Into<u32>) -> impl Into<impl Debug> { x }
-    //~^ ERROR nested `impl Trait` is not allowed
+    //~^ ERROR `impl Trait` is not allowed in `impl Trait`
     //~| ERROR the trait bound `impl Debug: From<impl Into<u32>>` is not satisfied
 }
 

@@ -1,21 +1,3 @@
-error[E0666]: nested `impl Trait` is not allowed
-  --> $DIR/where-allowed.rs:50:51
-   |
-LL | fn in_impl_Fn_parameter_in_parameters(_: &impl Fn(impl Debug)) { panic!() }
-   |                                           --------^^^^^^^^^^-
-   |                                           |       |
-   |                                           |       nested `impl Trait` here
-   |                                           outer `impl Trait`
-
-error[E0666]: nested `impl Trait` is not allowed
-  --> $DIR/where-allowed.rs:59:57
-   |
-LL | fn in_impl_Fn_parameter_in_return() -> &'static impl Fn(impl Debug) { panic!() }
-   |                                                 --------^^^^^^^^^^-
-   |                                                 |       |
-   |                                                 |       nested `impl Trait` here
-   |                                                 outer `impl Trait`
-
 error[E0658]: `impl Trait` in associated types is unstable
   --> $DIR/where-allowed.rs:122:16
    |
@@ -123,6 +105,14 @@ error[E0562]: `impl Trait` is not allowed in the parameters of `Fn` trait bounds
    |
 LL | fn in_impl_Fn_parameter_in_return() -> &'static impl Fn(impl Debug) { panic!() }
    |                                                         ^^^^^^^^^^
+   |
+   = note: `impl Trait` is only allowed in arguments and return types of functions and methods
+
+error[E0562]: `impl Trait` is not allowed in the return type of `Fn` trait bounds
+  --> $DIR/where-allowed.rs:64:59
+   |
+LL | fn in_impl_Fn_return_in_return() -> &'static impl Fn() -> impl Debug { panic!() }
+   |                                                           ^^^^^^^^^^
    |
    = note: `impl Trait` is only allowed in arguments and return types of functions and methods
 
@@ -428,7 +418,7 @@ LL | fn in_method_generic_param_default<T = impl Debug>(_: T) {}
    = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
    = note: for more information, see issue #36887 <https://github.com/rust-lang/rust/issues/36887>
 
-error: aborting due to 50 previous errors
+error: aborting due to 49 previous errors
 
-Some errors have detailed explanations: E0053, E0118, E0283, E0562, E0599, E0658, E0666.
+Some errors have detailed explanations: E0053, E0118, E0283, E0562, E0599, E0658.
 For more information about an error, try `rustc --explain E0053`.

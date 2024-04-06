@@ -49,7 +49,7 @@ fn in_dyn_Fn_return_in_return() -> &'static dyn Fn() -> impl Debug { panic!() }
 // Disallowed
 fn in_impl_Fn_parameter_in_parameters(_: &impl Fn(impl Debug)) { panic!() }
 //~^ ERROR `impl Trait` is not allowed in the parameters of `Fn` trait bounds
-//~^^ ERROR nested `impl Trait` is not allowed
+//~| ERROR `impl Trait` is not allowed in `impl Trait`
 
 // Disallowed
 fn in_impl_Fn_return_in_parameters(_: &impl Fn() -> impl Debug) { panic!() }
@@ -58,7 +58,7 @@ fn in_impl_Fn_return_in_parameters(_: &impl Fn() -> impl Debug) { panic!() }
 // Disallowed
 fn in_impl_Fn_parameter_in_return() -> &'static impl Fn(impl Debug) { panic!() }
 //~^ ERROR `impl Trait` is not allowed in the parameters of `Fn` trait bounds
-//~| ERROR nested `impl Trait` is not allowed
+//~| ERROR `impl Trait` is not allowed in `impl Trait`
 
 // Allowed
 fn in_impl_Fn_return_in_return() -> &'static impl Fn() -> impl Debug { panic!() }

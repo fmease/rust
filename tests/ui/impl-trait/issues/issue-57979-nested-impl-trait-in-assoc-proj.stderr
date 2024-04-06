@@ -1,12 +1,11 @@
-error[E0666]: nested `impl Trait` is not allowed
+error[E0562]: `impl Trait` is not allowed in `impl Trait`
   --> $DIR/issue-57979-nested-impl-trait-in-assoc-proj.rs:9:41
    |
 LL | pub fn demo(_: impl Quux<Assoc=impl Foo<impl Bar>>) { }
-   |                                ---------^^^^^^^^-
-   |                                |        |
-   |                                |        nested `impl Trait` here
-   |                                outer `impl Trait`
+   |                                         ^^^^^^^^
+   |
+   = note: `impl Trait` is only allowed in arguments and return types of functions and methods
 
 error: aborting due to 1 previous error
 
-For more information about this error, try `rustc --explain E0666`.
+For more information about this error, try `rustc --explain E0562`.
