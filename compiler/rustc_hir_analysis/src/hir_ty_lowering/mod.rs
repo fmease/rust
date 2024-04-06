@@ -1212,7 +1212,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                     err.emit()
                 } else if let Err(reported) = qself_ty.error_reported() {
                     reported
-                } else if let ty::Alias(ty::Opaque, alias_ty) = qself_ty.kind() {
+                } else if let ty::Alias(ty::Opaque, alias_ty) = qself_ty.kind() { // FIXME: bug!
                     // `<impl Trait as OtherTrait>::Assoc` makes no sense.
                     struct_span_code_err!(
                         tcx.dcx(),
