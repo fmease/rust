@@ -1674,14 +1674,6 @@ impl Type {
         matches!(self, Type::Tuple(v) if v.is_empty())
     }
 
-    pub(crate) fn projection(&self) -> Option<(&Type, DefId, PathSegment)> {
-        if let QPath(box QPathData { self_type, trait_, assoc, .. }) = self {
-            Some((self_type, trait_.as_ref()?.def_id(), assoc.clone()))
-        } else {
-            None
-        }
-    }
-
     fn inner_def_id(&self, cache: Option<&Cache>) -> Option<DefId> {
         let t: PrimitiveType = match *self {
             Type::Path { ref path } => return Some(path.def_id()),
@@ -2371,12 +2363,6 @@ pub(crate) struct Constant {
 pub(crate) enum Term {
     Type(Type),
     Constant(Constant),
-}
-
-impl Term {
-    pub(crate) fn ty(&self) -> Option<&Type> {
-        if let Term::Type(ty) = self { Some(ty) } else { None }
-    }
 }
 
 impl From<Type> for Term {
