@@ -9,8 +9,8 @@ use rustc_trait_selection::traits::auto_trait::{self, RegionTarget};
 use thin_vec::ThinVec;
 
 use crate::clean::{
-    self, clean_generic_param_def, clean_middle_ty, clean_predicate,
-    clean_trait_ref_with_constraints, clean_ty_generics, simplify, Lifetime,
+    self, clean_generic_param_def, clean_middle_ty, clean_trait_ref_with_constraints,
+    clean_ty_generics, Lifetime,
 };
 use crate::core::DocContext;
 
@@ -167,7 +167,7 @@ fn clean_param_env<'tcx>(
     // FIXME(#111101): Incorporate the explicit predicates of the item here...
     let item_predicates: FxIndexSet<_> =
         tcx.param_env(item_def_id).caller_bounds().iter().collect();
-    let where_predicates = param_env
+    let predicates = param_env
         .caller_bounds()
         .iter()
         // FIXME: ...which hopefully allows us to simplify this:
@@ -192,14 +192,14 @@ fn clean_param_env<'tcx>(
                 }
             })
         })
-        .flat_map(|pred| clean_predicate(pred, cx))
-        .chain(clean_region_outlives_constraints(&region_data, generics))
+        .map(|pred| (pred, rustc_span::DUMMY_SP))
         .collect();
 
-    let mut generics = clean::Generics { params, where_predicates };
-    simplify::sized_bounds(cx, &mut generics);
-    generics.where_predicates = simplify::where_clauses(cx, generics.where_predicates);
-    generics
+    let mut where_predicates = super::modern::clean_predicates(cx, predicates);
+    // FIXME: these no longer get "simplif[ied]::where_clauses"
+    where_predicates.extend(clean_region_outlives_constraints(&region_data, generics));
+
+    clean::Generics { params, where_predicates }
 }
 
 /// Clean region outlives constraints to where-predicates.

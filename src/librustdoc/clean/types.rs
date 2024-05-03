@@ -1654,14 +1654,6 @@ impl Type {
         matches!(self, Type::Tuple(v) if v.is_empty())
     }
 
-    pub(crate) fn projection(&self) -> Option<(&Type, DefId, PathSegment)> {
-        if let QPath(box QPathData { self_type, trait_, assoc, .. }) = self {
-            Some((self_type, trait_.as_ref()?.def_id(), assoc.clone()))
-        } else {
-            None
-        }
-    }
-
     /// Use this method to get the [DefId] of a [clean] AST node, including [PrimitiveType]s.
     ///
     /// [clean]: crate::clean
@@ -2343,12 +2335,6 @@ pub(crate) struct Constant {
 pub(crate) enum Term {
     Type(Type),
     Constant(ConstantKind),
-}
-
-impl Term {
-    pub(crate) fn ty(&self) -> Option<&Type> {
-        if let Term::Type(ty) = self { Some(ty) } else { None }
-    }
 }
 
 impl From<Type> for Term {
