@@ -11,8 +11,8 @@ use thin_vec::ThinVec;
 
 use crate::clean::{self, simplify, Lifetime};
 use crate::clean::{
-    clean_generic_param_def, clean_middle_ty, clean_predicate, clean_trait_ref_with_constraints,
-    clean_ty_generics,
+    clean_generic_param_def, clean_generics, clean_predicate, clean_trait_ref_with_constraints,
+    clean_ty,
 };
 use crate::core::DocContext;
 
@@ -102,11 +102,8 @@ fn synthesize_auto_trait_impl<'tcx>(
             // Instead, we generate `impl !Send for Foo<T>`, which better
             // expresses the fact that `Foo<T>` never implements `Send`,
             // regardless of the choice of `T`.
-            let mut generics = clean_ty_generics(
-                cx,
-                tcx.generics_of(item_def_id),
-                ty::GenericPredicates::default(),
-            );
+            let mut generics =
+                clean_generics(cx, tcx.generics_of(item_def_id), ty::GenericPredicates::default());
             generics.where_predicates.clear();
 
             (generics, ty::ImplPolarity::Negative)
@@ -122,7 +119,7 @@ fn synthesize_auto_trait_impl<'tcx>(
             safety: hir::Safety::Safe,
             generics,
             trait_: Some(clean_trait_ref_with_constraints(cx, trait_ref, ThinVec::new())),
-            for_: clean_middle_ty(ty::Binder::dummy(ty), cx, None, None),
+            for_: clean_ty(ty::Binder::dummy(ty), cx, None, None),
             items: Vec::new(),
             polarity,
             kind: clean::ImplKind::Auto,
