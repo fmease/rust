@@ -538,7 +538,7 @@ fn clean_impl<'tcx>(
     let for_ = clean_ty(impl_.self_ty, cx);
     let type_alias =
         for_.def_id(&cx.cache).and_then(|alias_def_id: DefId| match tcx.def_kind(alias_def_id) {
-            DefKind::TyAlias => Some(super::clean_middle_ty(
+            DefKind::TyAlias => Some(super::clean_ty(
                 ty::Binder::dummy(tcx.type_of(def_id).instantiate_identity()),
                 cx,
                 Some(def_id.to_def_id()),
@@ -589,12 +589,8 @@ pub(super) fn clean_impl_item<'tcx>(
             hir::ImplItemKind::Type(hir_ty) => {
                 let type_ = clean_ty(hir_ty, cx);
                 let generics = clean_generics(impl_.generics, cx);
-                let item_type = super::clean_middle_ty(
-                    ty::Binder::dummy(lower_ty(cx.tcx, hir_ty)),
-                    cx,
-                    None,
-                    None,
-                );
+                let item_type =
+                    super::clean_ty(ty::Binder::dummy(lower_ty(cx.tcx, hir_ty)), cx, None, None);
                 AssocTypeItem(
                     Box::new(TypeAlias {
                         type_,
@@ -638,12 +634,8 @@ pub(super) fn clean_item<'tcx>(
             ItemKind::TyAlias(hir_ty, generics) => {
                 *cx.current_type_aliases.entry(def_id).or_insert(0) += 1;
                 let rustdoc_ty = clean_ty(hir_ty, cx);
-                let type_ = super::clean_middle_ty(
-                    ty::Binder::dummy(lower_ty(cx.tcx, hir_ty)),
-                    cx,
-                    None,
-                    None,
-                );
+                let type_ =
+                    super::clean_ty(ty::Binder::dummy(lower_ty(cx.tcx, hir_ty)), cx, None, None);
                 let generics = clean_generics(generics, cx);
                 if let Some(count) = cx.current_type_aliases.get_mut(&def_id) {
                     *count -= 1;
@@ -874,7 +866,7 @@ fn clean_qpath<'tcx>(hir_ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> Type 
             if !ty.has_escaping_bound_vars()
                 && let Some(normalized_value) = super::normalize(cx, ty::Binder::dummy(ty))
             {
-                return super::clean_middle_ty(normalized_value, cx, None, None);
+                return super::clean_ty(normalized_value, cx, None, None);
             }
 
             let trait_segments = &p.segments[..p.segments.len() - 1];
@@ -930,7 +922,7 @@ fn clean_qpath<'tcx>(hir_ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> Type 
 fn clean_term<'tcx>(term: &hir::Term<'tcx>, cx: &mut DocContext<'tcx>) -> Term {
     match term {
         hir::Term::Ty(ty) => Term::Type(clean_ty(ty, cx)),
-        hir::Term::Const(c) => Term::Constant(super::clean_middle_const(
+        hir::Term::Const(c) => Term::Constant(super::clean_const(
             ty::Binder::dummy(ty::Const::from_anon_const(cx.tcx, c.def_id)),
             cx,
         )),
@@ -964,12 +956,8 @@ fn clean_trait_item<'tcx>(trait_item: &hir::TraitItem<'tcx>, cx: &mut DocContext
             hir::TraitItemKind::Type(bounds, Some(default)) => {
                 let generics = enter_impl_trait(cx, |cx| clean_generics(trait_item.generics, cx));
                 let bounds = bounds.iter().filter_map(|x| clean_generic_bound(x, cx)).collect();
-                let item_type = super::clean_middle_ty(
-                    ty::Binder::dummy(lower_ty(cx.tcx, default)),
-                    cx,
-                    None,
-                    None,
-                );
+                let item_type =
+                    super::clean_ty(ty::Binder::dummy(lower_ty(cx.tcx, default)), cx, None, None);
                 AssocTypeItem(
                     Box::new(TypeAlias {
                         type_: clean_ty(default, cx),

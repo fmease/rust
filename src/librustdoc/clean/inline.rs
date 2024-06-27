@@ -19,10 +19,9 @@ use rustc_span::hygiene::MacroKind;
 use rustc_span::symbol::{kw, sym, Symbol};
 
 use crate::clean::{
-    self, clean_bound_vars, clean_middle_assoc_item, clean_middle_field, clean_middle_ty,
-    clean_poly_fn_sig, clean_trait_ref_with_constraints, clean_ty_alias_inner_type,
-    clean_ty_generics, clean_variant_def, local, utils, Attributes, AttributesExt, ImplKind,
-    ItemId, Type,
+    self, clean_assoc_item, clean_bound_vars, clean_field, clean_generics, clean_poly_fn_sig,
+    clean_trait_ref_with_constraints, clean_ty, clean_ty_alias_inner_type, clean_variant_def,
+    local, utils, Attributes, AttributesExt, ImplKind, ItemId, Type,
 };
 use crate::core::DocContext;
 use crate::formats::item_type::ItemType;
@@ -281,11 +280,11 @@ pub(crate) fn build_external_trait(cx: &mut DocContext<'_>, did: DefId) -> clean
         .associated_items(did)
         .in_definition_order()
         .filter(|item| !item.is_impl_trait_in_trait())
-        .map(|item| clean_middle_assoc_item(item, cx))
+        .map(|item| clean_assoc_item(item, cx))
         .collect();
 
     let predicates = cx.tcx.predicates_of(did);
-    let generics = clean_ty_generics(cx, cx.tcx.generics_of(did), predicates);
+    let generics = clean_generics(cx, cx.tcx.generics_of(did), predicates);
     let generics = filter_non_trait_generics(did, generics);
     let (generics, supertrait_bounds) = separate_supertrait_bounds(generics);
     clean::Trait { def_id: did, generics, items: trait_items, bounds: supertrait_bounds }
@@ -298,7 +297,7 @@ pub(crate) fn build_function<'tcx>(
     let sig = cx.tcx.fn_sig(def_id).instantiate_identity();
     // The generics need to be cleaned before the signature.
     let mut generics =
-        clean_ty_generics(cx, cx.tcx.generics_of(def_id), cx.tcx.explicit_predicates_of(def_id));
+        clean_generics(cx, cx.tcx.generics_of(def_id), cx.tcx.explicit_predicates_of(def_id));
     let bound_vars = clean_bound_vars(sig.bound_vars());
 
     // At the time of writing early & late-bound params are stored separately in rustc,
@@ -330,7 +329,7 @@ fn build_enum(cx: &mut DocContext<'_>, did: DefId) -> clean::Enum {
     let predicates = cx.tcx.explicit_predicates_of(did);
 
     clean::Enum {
-        generics: clean_ty_generics(cx, cx.tcx.generics_of(did), predicates),
+        generics: clean_generics(cx, cx.tcx.generics_of(did), predicates),
         variants: cx.tcx.adt_def(did).variants().iter().map(|v| clean_variant_def(v, cx)).collect(),
     }
 }
@@ -341,8 +340,8 @@ fn build_struct(cx: &mut DocContext<'_>, did: DefId) -> clean::Struct {
 
     clean::Struct {
         ctor_kind: variant.ctor_kind(),
-        generics: clean_ty_generics(cx, cx.tcx.generics_of(did), predicates),
-        fields: variant.fields.iter().map(|x| clean_middle_field(x, cx)).collect(),
+        generics: clean_generics(cx, cx.tcx.generics_of(did), predicates),
+        fields: variant.fields.iter().map(|x| clean_field(x, cx)).collect(),
     }
 }
 
@@ -350,8 +349,8 @@ fn build_union(cx: &mut DocContext<'_>, did: DefId) -> clean::Union {
     let predicates = cx.tcx.explicit_predicates_of(did);
     let variant = cx.tcx.adt_def(did).non_enum_variant();
 
-    let generics = clean_ty_generics(cx, cx.tcx.generics_of(did), predicates);
-    let fields = variant.fields.iter().map(|x| clean_middle_field(x, cx)).collect();
+    let generics = clean_generics(cx, cx.tcx.generics_of(did), predicates);
+    let fields = variant.fields.iter().map(|x| clean_field(x, cx)).collect();
     clean::Union { generics, fields }
 }
 
@@ -362,12 +361,12 @@ fn build_type_alias(
 ) -> Box<clean::TypeAlias> {
     let predicates = cx.tcx.explicit_predicates_of(did);
     let ty = cx.tcx.type_of(did).instantiate_identity();
-    let type_ = clean_middle_ty(ty::Binder::dummy(ty), cx, Some(did), None);
+    let type_ = clean_ty(ty::Binder::dummy(ty), cx, Some(did), None);
     let inner_type = clean_ty_alias_inner_type(ty, cx, ret);
 
     Box::new(clean::TypeAlias {
         type_,
-        generics: clean_ty_generics(cx, cx.tcx.generics_of(did), predicates),
+        generics: clean_generics(cx, cx.tcx.generics_of(did), predicates),
         inner_type,
         item_type: None,
     })
@@ -478,7 +477,7 @@ pub(crate) fn build_impl(
 
     let for_ = match &impl_item {
         Some(impl_) => local::clean_ty(impl_.self_ty, cx),
-        None => clean_middle_ty(
+        None => clean_ty(
             ty::Binder::dummy(tcx.type_of(did).instantiate_identity()),
             cx,
             Some(did),
@@ -560,11 +559,9 @@ pub(crate) fn build_impl(
                         item.visibility(tcx).is_public()
                     }
                 })
-                .map(|item| clean_middle_assoc_item(item, cx))
+                .map(|item| clean_assoc_item(item, cx))
                 .collect::<Vec<_>>(),
-            clean::enter_impl_trait(cx, |cx| {
-                clean_ty_generics(cx, tcx.generics_of(did), predicates)
-            }),
+            clean::enter_impl_trait(cx, |cx| clean_generics(cx, tcx.generics_of(did), predicates)),
         ),
     };
     let polarity = tcx.impl_polarity(did);
@@ -725,20 +722,16 @@ fn build_const_item(
     def_id: DefId,
 ) -> (clean::Generics, clean::Type, clean::Constant) {
     let mut generics =
-        clean_ty_generics(cx, cx.tcx.generics_of(def_id), cx.tcx.explicit_predicates_of(def_id));
+        clean_generics(cx, cx.tcx.generics_of(def_id), cx.tcx.explicit_predicates_of(def_id));
     clean::simplify::move_bounds_to_generic_parameters(&mut generics);
-    let ty = clean_middle_ty(
-        ty::Binder::dummy(cx.tcx.type_of(def_id).instantiate_identity()),
-        cx,
-        None,
-        None,
-    );
+    let ty =
+        clean_ty(ty::Binder::dummy(cx.tcx.type_of(def_id).instantiate_identity()), cx, None, None);
     (generics, ty, clean::Constant { kind: clean::ConstantKind::Extern { def_id } })
 }
 
 fn build_static(cx: &mut DocContext<'_>, did: DefId, mutable: bool) -> clean::Static {
     clean::Static {
-        type_: clean_middle_ty(
+        type_: clean_ty(
             ty::Binder::dummy(cx.tcx.type_of(did).instantiate_identity()),
             cx,
             Some(did),
