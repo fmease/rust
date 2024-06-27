@@ -19,10 +19,10 @@ use rustc_span::hygiene::MacroKind;
 use rustc_span::symbol::{kw, sym, Symbol};
 
 use crate::clean::{
-    self, clean_bound_vars, clean_generics, clean_impl_item, clean_middle_assoc_item,
-    clean_middle_field, clean_middle_ty, clean_poly_fn_sig, clean_trait_ref_with_constraints,
-    clean_ty, clean_ty_alias_inner_type, clean_ty_generics, clean_variant_def, utils, Attributes,
-    AttributesExt, ImplKind, ItemId, Type,
+    self, clean_bound_vars, clean_middle_assoc_item, clean_middle_field, clean_middle_ty,
+    clean_poly_fn_sig, clean_trait_ref_with_constraints, clean_ty_alias_inner_type,
+    clean_ty_generics, clean_variant_def, local, utils, Attributes, AttributesExt, ImplKind,
+    ItemId, Type,
 };
 use crate::core::DocContext;
 use crate::formats::item_type::ItemType;
@@ -477,7 +477,7 @@ pub(crate) fn build_impl(
     };
 
     let for_ = match &impl_item {
-        Some(impl_) => clean_ty(impl_.self_ty, cx),
+        Some(impl_) => local::clean_ty(impl_.self_ty, cx),
         None => clean_middle_ty(
             ty::Binder::dummy(tcx.type_of(did).instantiate_identity()),
             cx,
@@ -533,9 +533,9 @@ pub(crate) fn build_impl(
                         true
                     }
                 })
-                .map(|item| clean_impl_item(item, cx))
+                .map(|item| local::clean_impl_item(item, cx))
                 .collect::<Vec<_>>(),
-            clean_generics(impl_.generics, cx),
+            local::clean_generics(impl_.generics, cx),
         ),
         None => (
             tcx.associated_items(did)
