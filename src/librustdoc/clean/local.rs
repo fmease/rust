@@ -79,7 +79,7 @@ fn clean_assoc_item_constraint<'tcx>(
         },
         kind: match constraint.kind {
             hir::AssocItemConstraintKind::Equality { ref term } => {
-                AssocItemConstraintKind::Equality { term: clean_hir_term(term, cx) }
+                AssocItemConstraintKind::Equality { term: clean_term(term, cx) }
             }
             hir::AssocItemConstraintKind::Bound { bounds } => AssocItemConstraintKind::Bound {
                 bounds: bounds.iter().filter_map(|b| clean_generic_bound(b, cx)).collect(),
@@ -107,7 +107,7 @@ fn clean_bare_fn_ty<'tcx>(
     BareFunctionDecl { safety: bare_fn.safety, abi: bare_fn.abi, decl, generic_params }
 }
 
-fn clean_const<'tcx>(constant: &hir::ConstArg<'_>, _cx: &mut DocContext<'tcx>) -> Constant {
+fn clean_const_arg<'tcx>(constant: &hir::ConstArg<'_>, _cx: &mut DocContext<'tcx>) -> Constant {
     Constant { kind: ConstantKind::Anonymous { body: constant.value.body } }
 }
 
@@ -163,39 +163,6 @@ fn clean_field<'tcx>(field: &hir::FieldDef<'tcx>, cx: &mut DocContext<'tcx>) -> 
     )
 }
 
-/// This is needed to make it more "readable" when documenting functions using
-/// `rustc_legacy_const_generics`. More information in
-/// <https://github.com/rust-lang/rust/issues/83167>.
-fn clean_fn_decl_legacy_const_generics(func: &mut Function, attrs: &[ast::Attribute]) {
-    for meta_item_list in attrs
-        .iter()
-        .filter(|a| a.has_name(sym::rustc_legacy_const_generics))
-        .filter_map(|a| a.meta_item_list())
-    {
-        for (pos, literal) in meta_item_list.iter().filter_map(|meta| meta.lit()).enumerate() {
-            match literal.kind {
-                ast::LitKind::Int(a, _) => {
-                    let gen = func.generics.params.remove(0);
-                    if let GenericParamDef {
-                        name,
-                        kind: GenericParamDefKind::Const { ty, .. },
-                        ..
-                    } = gen
-                    {
-                        func.decl
-                            .inputs
-                            .values
-                            .insert(a.get() as _, Argument { name, type_: *ty, is_const: true });
-                    } else {
-                        panic!("unexpected non const in position {pos}");
-                    }
-                }
-                _ => panic!("invalid arg index"),
-            }
-        }
-    }
-}
-
 fn clean_fn_decl_with_args<'tcx>(
     cx: &mut DocContext<'tcx>,
     decl: &hir::FnDecl<'tcx>,
@@ -237,15 +204,14 @@ fn clean_fn_or_proc_macro<'tcx>(
     match macro_kind {
         Some(kind) => clean_proc_macro(item, name, kind, cx),
         None => {
-            let mut func = clean_function(cx, sig, generics, FunctionArgs::Body(body_id));
-            clean_fn_decl_legacy_const_generics(&mut func, attrs);
+            let mut func = clean_fn(cx, sig, generics, FunctionArgs::Body(body_id));
+            clean_legacy_const_generics(&mut func, attrs);
             FunctionItem(func)
         }
     }
 }
 
-// FIXME: rename
-fn clean_function<'tcx>(
+fn clean_fn<'tcx>(
     cx: &mut DocContext<'tcx>,
     sig: &hir::FnSig<'tcx>,
     generics: &hir::Generics<'tcx>,
@@ -266,6 +232,40 @@ fn clean_function<'tcx>(
         (generics, decl)
     });
     Box::new(Function { decl, generics })
+}
+
+pub(super) fn clean_foreign_item<'tcx>(
+    cx: &mut DocContext<'tcx>,
+    item: &hir::ForeignItem<'tcx>,
+    renamed: Option<Symbol>,
+) -> Item {
+    let def_id = item.owner_id.to_def_id();
+    cx.with_param_env(def_id, |cx| {
+        let kind = match item.kind {
+            hir::ForeignItemKind::Fn(decl, names, generics, safety) => {
+                let (generics, decl) = enter_impl_trait(cx, |cx| {
+                    // NOTE: generics must be cleaned before args
+                    let generics = clean_generics(generics, cx);
+                    let args = clean_args_from_types_and_names(cx, decl.inputs, names);
+                    let decl = clean_fn_decl_with_args(cx, decl, None, args);
+                    (generics, decl)
+                });
+                ForeignFunctionItem(Box::new(Function { decl, generics }), safety)
+            }
+            hir::ForeignItemKind::Static(ty, mutability, safety) => ForeignStaticItem(
+                Static { type_: clean_ty(ty, cx), mutability, expr: None },
+                safety,
+            ),
+            hir::ForeignItemKind::Type => ForeignTypeItem,
+        };
+
+        Item::from_def_id_and_parts(
+            item.owner_id.def_id.to_def_id(),
+            Some(renamed.unwrap_or(item.ident.name)),
+            kind,
+            cx,
+        )
+    })
 }
 
 fn clean_generic_args<'tcx>(
@@ -299,7 +299,9 @@ fn clean_generic_args<'tcx>(
                     }) => {
                         return None;
                     }
-                    hir::GenericArg::Const(ct) => GenericArg::Const(Box::new(clean_const(ct, cx))),
+                    hir::GenericArg::Const(ct) => {
+                        GenericArg::Const(Box::new(clean_const_arg(ct, cx)))
+                    }
                     hir::GenericArg::Infer(_inf) => GenericArg::Infer,
                 })
             })
@@ -513,17 +515,6 @@ pub(super) fn clean_generics<'tcx>(
     }
 }
 
-// FIXME: rename
-fn clean_hir_term<'tcx>(term: &hir::Term<'tcx>, cx: &mut DocContext<'tcx>) -> Term {
-    match term {
-        hir::Term::Ty(ty) => Term::Type(clean_ty(ty, cx)),
-        hir::Term::Const(c) => Term::Constant(super::clean_middle_const(
-            ty::Binder::dummy(ty::Const::from_anon_const(cx.tcx, c.def_id)),
-            cx,
-        )),
-    }
-}
-
 fn clean_impl<'tcx>(
     impl_: &hir::Impl<'tcx>,
     def_id: LocalDefId,
@@ -591,7 +582,7 @@ pub(super) fn clean_impl_item<'tcx>(
                 AssocConstItem(generics, Box::new(clean_ty(ty, cx)), default)
             }
             hir::ImplItemKind::Fn(ref sig, body) => {
-                let m = clean_function(cx, sig, impl_.generics, FunctionArgs::Body(body));
+                let m = clean_fn(cx, sig, impl_.generics, FunctionArgs::Body(body));
                 let defaultness = cx.tcx.defaultness(impl_.owner_id);
                 MethodItem(m, Some(defaultness))
             }
@@ -620,56 +611,7 @@ pub(super) fn clean_impl_item<'tcx>(
     })
 }
 
-fn clean_lifetime<'tcx>(lifetime: &hir::Lifetime, cx: &mut DocContext<'tcx>) -> Lifetime {
-    if let Some(
-        rbv::ResolvedArg::EarlyBound(did)
-        | rbv::ResolvedArg::LateBound(_, _, did)
-        | rbv::ResolvedArg::Free(_, did),
-    ) = cx.tcx.named_bound_var(lifetime.hir_id)
-        && let Some(lt) = cx.args.get(&did).and_then(|arg| arg.as_lt())
-    {
-        return lt.clone();
-    }
-    Lifetime(lifetime.ident.name)
-}
-
-// FIXME: rename
-pub(super) fn clean_maybe_renamed_foreign_item<'tcx>(
-    cx: &mut DocContext<'tcx>,
-    item: &hir::ForeignItem<'tcx>,
-    renamed: Option<Symbol>,
-) -> Item {
-    let def_id = item.owner_id.to_def_id();
-    cx.with_param_env(def_id, |cx| {
-        let kind = match item.kind {
-            hir::ForeignItemKind::Fn(decl, names, generics, safety) => {
-                let (generics, decl) = enter_impl_trait(cx, |cx| {
-                    // NOTE: generics must be cleaned before args
-                    let generics = clean_generics(generics, cx);
-                    let args = clean_args_from_types_and_names(cx, decl.inputs, names);
-                    let decl = clean_fn_decl_with_args(cx, decl, None, args);
-                    (generics, decl)
-                });
-                ForeignFunctionItem(Box::new(Function { decl, generics }), safety)
-            }
-            hir::ForeignItemKind::Static(ty, mutability, safety) => ForeignStaticItem(
-                Static { type_: clean_ty(ty, cx), mutability, expr: None },
-                safety,
-            ),
-            hir::ForeignItemKind::Type => ForeignTypeItem,
-        };
-
-        Item::from_def_id_and_parts(
-            item.owner_id.def_id.to_def_id(),
-            Some(renamed.unwrap_or(item.ident.name)),
-            kind,
-            cx,
-        )
-    })
-}
-
-// FIXME: rename
-pub(super) fn clean_maybe_renamed_item<'tcx>(
+pub(super) fn clean_item<'tcx>(
     cx: &mut DocContext<'tcx>,
     item: &hir::Item<'tcx>,
     renamed: Option<Symbol>,
@@ -791,6 +733,52 @@ pub(super) fn clean_maybe_renamed_item<'tcx>(
             renamed,
         )]
     })
+}
+
+/// This is needed to make it more "readable" when documenting functions using
+/// `rustc_legacy_const_generics`. More information in
+/// <https://github.com/rust-lang/rust/issues/83167>.
+fn clean_legacy_const_generics(func: &mut Function, attrs: &[ast::Attribute]) {
+    for meta_item_list in attrs
+        .iter()
+        .filter(|a| a.has_name(sym::rustc_legacy_const_generics))
+        .filter_map(|a| a.meta_item_list())
+    {
+        for (pos, literal) in meta_item_list.iter().filter_map(|meta| meta.lit()).enumerate() {
+            match literal.kind {
+                ast::LitKind::Int(a, _) => {
+                    let gen = func.generics.params.remove(0);
+                    if let GenericParamDef {
+                        name,
+                        kind: GenericParamDefKind::Const { ty, .. },
+                        ..
+                    } = gen
+                    {
+                        func.decl
+                            .inputs
+                            .values
+                            .insert(a.get() as _, Argument { name, type_: *ty, is_const: true });
+                    } else {
+                        panic!("unexpected non const in position {pos}");
+                    }
+                }
+                _ => panic!("invalid arg index"),
+            }
+        }
+    }
+}
+
+fn clean_lifetime<'tcx>(lifetime: &hir::Lifetime, cx: &mut DocContext<'tcx>) -> Lifetime {
+    if let Some(
+        rbv::ResolvedArg::EarlyBound(did)
+        | rbv::ResolvedArg::LateBound(_, _, did)
+        | rbv::ResolvedArg::Free(_, did),
+    ) = cx.tcx.named_bound_var(lifetime.hir_id)
+        && let Some(lt) = cx.args.get(&did).and_then(|arg| arg.as_lt())
+    {
+        return lt.clone();
+    }
+    Lifetime(lifetime.ident.name)
 }
 
 fn clean_path<'tcx>(path: &hir::Path<'tcx>, cx: &mut DocContext<'tcx>) -> Path {
@@ -939,6 +927,16 @@ fn clean_qpath<'tcx>(hir_ty: &hir::Ty<'tcx>, cx: &mut DocContext<'tcx>) -> Type 
     }
 }
 
+fn clean_term<'tcx>(term: &hir::Term<'tcx>, cx: &mut DocContext<'tcx>) -> Term {
+    match term {
+        hir::Term::Ty(ty) => Term::Type(clean_ty(ty, cx)),
+        hir::Term::Const(c) => Term::Constant(super::clean_middle_const(
+            ty::Binder::dummy(ty::Const::from_anon_const(cx.tcx, c.def_id)),
+            cx,
+        )),
+    }
+}
+
 fn clean_trait_item<'tcx>(trait_item: &hir::TraitItem<'tcx>, cx: &mut DocContext<'tcx>) -> Item {
     let local_did = trait_item.owner_id.to_def_id();
     cx.with_param_env(local_did, |cx| {
@@ -956,11 +954,11 @@ fn clean_trait_item<'tcx>(trait_item: &hir::TraitItem<'tcx>, cx: &mut DocContext
                 TyAssocConstItem(generics, Box::new(clean_ty(ty, cx)))
             }
             hir::TraitItemKind::Fn(ref sig, hir::TraitFn::Provided(body)) => {
-                let m = clean_function(cx, sig, trait_item.generics, FunctionArgs::Body(body));
+                let m = clean_fn(cx, sig, trait_item.generics, FunctionArgs::Body(body));
                 MethodItem(m, None)
             }
             hir::TraitItemKind::Fn(ref sig, hir::TraitFn::Required(names)) => {
-                let m = clean_function(cx, sig, trait_item.generics, FunctionArgs::Names(names));
+                let m = clean_fn(cx, sig, trait_item.generics, FunctionArgs::Names(names));
                 TyMethodItem(m)
             }
             hir::TraitItemKind::Type(bounds, Some(default)) => {

@@ -66,7 +66,7 @@ pub(crate) fn clean_doc_module<'tcx>(doc: &DocModule<'tcx>, cx: &mut DocContext<
     let mut items: Vec<Item> = vec![];
     let mut inserted = FxHashSet::default();
     items.extend(doc.foreigns.iter().map(|(item, renamed)| {
-        let item = local::clean_maybe_renamed_foreign_item(cx, item, *renamed);
+        let item = local::clean_foreign_item(cx, item, *renamed);
         if let Some(name) = item.name
             && (cx.render_options.document_hidden || !item.is_doc_hidden())
         {
@@ -98,7 +98,7 @@ pub(crate) fn clean_doc_module<'tcx>(doc: &DocModule<'tcx>, cx: &mut DocContext<
         if matches!(item.kind, hir::ItemKind::Use(_, hir::UseKind::Glob)) {
             return Vec::new();
         }
-        let v = local::clean_maybe_renamed_item(cx, item, *renamed, *import_id);
+        let v = local::clean_item(cx, item, *renamed, *import_id);
         for item in &v {
             if let Some(name) = item.name
                 && (cx.render_options.document_hidden || !item.is_doc_hidden())
