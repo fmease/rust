@@ -27,9 +27,9 @@ use super::{
 };
 
 fn clean_args_from_types_and_body_id<'tcx>(
-    cx: &mut DocContext<'tcx>,
     types: &[hir::Ty<'tcx>],
     body_id: hir::BodyId,
+    cx: &mut DocContext<'tcx>,
 ) -> Arguments {
     let body = cx.tcx.hir().body(body_id);
 
@@ -47,9 +47,9 @@ fn clean_args_from_types_and_body_id<'tcx>(
 }
 
 fn clean_args_from_types_and_names<'tcx>(
-    cx: &mut DocContext<'tcx>,
     types: &[hir::Ty<'tcx>],
     names: &[Ident],
+    cx: &mut DocContext<'tcx>,
 ) -> Arguments {
     Arguments {
         values: types
@@ -107,7 +107,7 @@ fn clean_bare_fn_ty<'tcx>(
     BareFunctionDecl { safety: bare_fn.safety, abi: bare_fn.abi, decl, generic_params }
 }
 
-fn clean_const_arg<'tcx>(constant: &hir::ConstArg<'_>, _cx: &mut DocContext<'tcx>) -> Constant {
+fn clean_const_arg<'tcx>(constant: &hir::ConstArg<'_>) -> Constant {
     Constant { kind: ConstantKind::Anonymous { body: constant.value.body } }
 }
 
@@ -164,10 +164,10 @@ fn clean_field<'tcx>(field: &hir::FieldDef<'tcx>, cx: &mut DocContext<'tcx>) -> 
 }
 
 fn clean_fn_decl_with_args<'tcx>(
-    cx: &mut DocContext<'tcx>,
     decl: &hir::FnDecl<'tcx>,
     header: Option<&hir::FnHeader>,
     args: Arguments,
+    cx: &mut DocContext<'tcx>,
 ) -> FnDecl {
     let mut output = match decl.output {
         hir::FnRetTy::Return(typ) => clean_ty(typ, cx),
@@ -212,10 +212,10 @@ fn clean_fn_or_proc_macro<'tcx>(
 }
 
 fn clean_fn<'tcx>(
-    cx: &mut DocContext<'tcx>,
     sig: &hir::FnSig<'tcx>,
     generics: &hir::Generics<'tcx>,
     args: FunctionArgs<'tcx>,
+    cx: &mut DocContext<'tcx>,
 ) -> Box<Function> {
     let (generics, decl) = enter_impl_trait(cx, |cx| {
         // NOTE: generics must be cleaned before args
@@ -235,9 +235,9 @@ fn clean_fn<'tcx>(
 }
 
 pub(super) fn clean_foreign_item<'tcx>(
-    cx: &mut DocContext<'tcx>,
     item: &hir::ForeignItem<'tcx>,
     renamed: Option<Symbol>,
+    cx: &mut DocContext<'tcx>,
 ) -> Item {
     let def_id = item.owner_id.to_def_id();
     cx.with_param_env(def_id, |cx| {
@@ -299,9 +299,7 @@ fn clean_generic_args<'tcx>(
                     }) => {
                         return None;
                     }
-                    hir::GenericArg::Const(ct) => {
-                        GenericArg::Const(Box::new(clean_const_arg(ct, cx)))
-                    }
+                    hir::GenericArg::Const(ct) => GenericArg::Const(Box::new(clean_const_arg(ct))),
                     hir::GenericArg::Infer(_inf) => GenericArg::Infer,
                 })
             })
@@ -338,9 +336,9 @@ fn clean_generic_bound<'tcx>(
 }
 
 fn clean_generic_param<'tcx>(
-    cx: &mut DocContext<'tcx>,
-    generics: Option<&hir::Generics<'tcx>>,
     param: &hir::GenericParam<'tcx>,
+    generics: Option<&hir::Generics<'tcx>>,
+    cx: &mut DocContext<'tcx>,
 ) -> GenericParamDef {
     let (name, kind) = match param.kind {
         hir::GenericParamKind::Lifetime { .. } => {
@@ -608,10 +606,10 @@ pub(super) fn clean_impl_item<'tcx>(
 }
 
 pub(super) fn clean_item<'tcx>(
-    cx: &mut DocContext<'tcx>,
     item: &hir::Item<'tcx>,
     renamed: Option<Symbol>,
     import_id: Option<LocalDefId>,
+    cx: &mut DocContext<'tcx>,
 ) -> Vec<Item> {
     use hir::ItemKind;
 
@@ -1045,8 +1043,8 @@ pub(super) fn clean_use_statement<'tcx>(
     name: Symbol,
     path: &hir::UsePath<'tcx>,
     kind: hir::UseKind,
-    cx: &mut DocContext<'tcx>,
     inlined_names: &mut FxHashSet<(ItemType, Symbol)>,
+    cx: &mut DocContext<'tcx>,
 ) -> Vec<Item> {
     let mut items = Vec::new();
     let hir::UsePath { segments, ref res, span } = *path;
@@ -1062,8 +1060,8 @@ pub(super) fn clean_use_statement_inner<'tcx>(
     name: Symbol,
     path: &hir::Path<'tcx>,
     kind: hir::UseKind,
-    cx: &mut DocContext<'tcx>,
     inlined_names: &mut FxHashSet<(ItemType, Symbol)>,
+    cx: &mut DocContext<'tcx>,
 ) -> Vec<Item> {
     if should_ignore_res(path.res) {
         return Vec::new();
@@ -1240,9 +1238,9 @@ fn clean_where_predicate<'tcx>(
 ///
 /// If the path is not a re-export or is public, it'll return `None`.
 fn first_non_private<'tcx>(
-    cx: &mut DocContext<'tcx>,
     hir_id: hir::HirId,
     path: &hir::Path<'tcx>,
+    cx: &mut DocContext<'tcx>,
 ) -> Option<Path> {
     let target_def_id = path.res.opt_def_id()?;
     let (parent_def_id, ident) = match &path.segments {
@@ -1332,10 +1330,10 @@ fn first_non_private<'tcx>(
 }
 
 fn first_non_private_clean_path<'tcx>(
-    cx: &mut DocContext<'tcx>,
     path: &hir::Path<'tcx>,
     new_path_segments: &'tcx [hir::PathSegment<'tcx>],
     new_path_span: rustc_span::Span,
+    cx: &mut DocContext<'tcx>,
 ) -> Path {
     let new_hir_path =
         hir::Path { segments: new_path_segments, res: path.res, span: new_path_span };
@@ -1376,8 +1374,8 @@ fn is_impl_trait(param: &hir::GenericParam<'_>) -> bool {
 }
 
 fn maybe_expand_private_type_alias<'tcx>(
-    cx: &mut DocContext<'tcx>,
     path: &hir::Path<'tcx>,
+    cx: &mut DocContext<'tcx>,
 ) -> Option<Type> {
     let Res::Def(DefKind::TyAlias, def_id) = path.res else { return None };
     // Substitute private type aliases
