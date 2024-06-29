@@ -25,16 +25,17 @@ mod auto_trait;
 mod blanket_impl;
 pub(crate) mod cfg;
 pub(crate) mod inline;
+// FIXME: temporary module
+mod modern;
 mod render_macro_matchers;
 mod simplify;
 pub(crate) mod types;
 pub(crate) mod utils;
-
 use rustc_ast as ast;
 use rustc_ast::token::{Token, TokenKind};
 use rustc_ast::tokenstream::{TokenStream, TokenTree};
 use rustc_attr as attr;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexMap, FxIndexSet, IndexEntry};
+use rustc_data_structures::fx::{FxHashSet, FxIndexMap, FxIndexSet, IndexEntry};
 use rustc_errors::{codes::*, struct_span_code_err, FatalError};
 use rustc_hir as hir;
 use rustc_hir::def::{CtorKind, DefKind, Res};
@@ -44,8 +45,8 @@ use rustc_hir_analysis::lower_ty;
 use rustc_middle::metadata::Reexport;
 use rustc_middle::middle::resolve_bound_vars as rbv;
 use rustc_middle::ty::GenericArgsRef;
-use rustc_middle::ty::TypeVisitableExt;
 use rustc_middle::ty::{self, AdtKind, Ty, TyCtxt};
+use rustc_middle::ty::{TypeSuperVisitable, TypeVisitable, TypeVisitableExt};
 use rustc_middle::{bug, span_bug};
 use rustc_span::hygiene::{AstPass, MacroKind};
 use rustc_span::symbol::{kw, sym, Ident, Symbol};
@@ -55,6 +56,7 @@ use rustc_trait_selection::traits::wf::object_region_bounds;
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::mem;
+use std::ops::ControlFlow;
 use thin_vec::ThinVec;
 
 use crate::core::DocContext;
@@ -349,73 +351,6 @@ fn clean_where_predicate<'tcx>(
     })
 }
 
-pub(crate) fn clean_predicate<'tcx>(
-    predicate: ty::Clause<'tcx>,
-    cx: &mut DocContext<'tcx>,
-) -> Option<WherePredicate> {
-    let bound_predicate = predicate.kind();
-    match bound_predicate.skip_binder() {
-        ty::ClauseKind::Trait(pred) => clean_poly_trait_predicate(bound_predicate.rebind(pred), cx),
-        ty::ClauseKind::RegionOutlives(pred) => clean_region_outlives_predicate(pred),
-        ty::ClauseKind::TypeOutlives(pred) => {
-            clean_type_outlives_predicate(bound_predicate.rebind(pred), cx)
-        }
-        ty::ClauseKind::Projection(pred) => {
-            Some(clean_projection_predicate(bound_predicate.rebind(pred), cx))
-        }
-        // FIXME(generic_const_exprs): should this do something?
-        ty::ClauseKind::ConstEvaluatable(..)
-        | ty::ClauseKind::WellFormed(..)
-        | ty::ClauseKind::ConstArgHasType(..) => None,
-    }
-}
-
-fn clean_poly_trait_predicate<'tcx>(
-    pred: ty::PolyTraitPredicate<'tcx>,
-    cx: &mut DocContext<'tcx>,
-) -> Option<WherePredicate> {
-    // `T: ~const Destruct` is hidden because `T: Destruct` is a no-op.
-    // FIXME(effects) check constness
-    if Some(pred.skip_binder().def_id()) == cx.tcx.lang_items().destruct_trait() {
-        return None;
-    }
-
-    let poly_trait_ref = pred.map_bound(|pred| pred.trait_ref);
-    Some(WherePredicate::BoundPredicate {
-        ty: clean_middle_ty(poly_trait_ref.self_ty(), cx, None, None),
-        bounds: vec![clean_poly_trait_ref_with_constraints(cx, poly_trait_ref, ThinVec::new())],
-        bound_params: Vec::new(),
-    })
-}
-
-fn clean_region_outlives_predicate<'tcx>(
-    pred: ty::RegionOutlivesPredicate<'tcx>,
-) -> Option<WherePredicate> {
-    let ty::OutlivesPredicate(a, b) = pred;
-
-    Some(WherePredicate::RegionPredicate {
-        lifetime: clean_middle_region(a).expect("failed to clean lifetime"),
-        bounds: vec![GenericBound::Outlives(
-            clean_middle_region(b).expect("failed to clean bounds"),
-        )],
-    })
-}
-
-fn clean_type_outlives_predicate<'tcx>(
-    pred: ty::Binder<'tcx, ty::TypeOutlivesPredicate<'tcx>>,
-    cx: &mut DocContext<'tcx>,
-) -> Option<WherePredicate> {
-    let ty::OutlivesPredicate(ty, lt) = pred.skip_binder();
-
-    Some(WherePredicate::BoundPredicate {
-        ty: clean_middle_ty(pred.rebind(ty), cx, None, None),
-        bounds: vec![GenericBound::Outlives(
-            clean_middle_region(lt).expect("failed to clean lifetimes"),
-        )],
-        bound_params: Vec::new(),
-    })
-}
-
 fn clean_middle_term<'tcx>(
     term: ty::Binder<'tcx, ty::Term<'tcx>>,
     cx: &mut DocContext<'tcx>,
@@ -436,24 +371,6 @@ fn clean_hir_term<'tcx>(term: &hir::Term<'tcx>, cx: &mut DocContext<'tcx>) -> Te
     }
 }
 
-fn clean_projection_predicate<'tcx>(
-    pred: ty::Binder<'tcx, ty::ProjectionPredicate<'tcx>>,
-    cx: &mut DocContext<'tcx>,
-) -> WherePredicate {
-    WherePredicate::EqPredicate {
-        lhs: clean_projection(
-            pred.map_bound(|p| {
-                // FIXME: This needs to be made resilient for `AliasTerm`s that
-                // are associated consts.
-                p.projection_term.expect_ty(cx.tcx)
-            }),
-            cx,
-            None,
-        ),
-        rhs: clean_middle_term(pred.map_bound(|p| p.term), cx),
-    }
-}
-
 fn clean_projection<'tcx>(
     ty: ty::Binder<'tcx, ty::AliasTy<'tcx>>,
     cx: &mut DocContext<'tcx>,
@@ -464,8 +381,7 @@ fn clean_projection<'tcx>(
             .tcx
             .explicit_item_bounds(ty.skip_binder().def_id)
             .iter_instantiated_copied(cx.tcx, ty.skip_binder().args)
-            .map(|(pred, _)| pred)
-            .collect::<Vec<_>>();
+            .collect();
         return clean_middle_opaque_bounds(cx, bounds);
     }
 
@@ -496,6 +412,7 @@ fn compute_should_show_cast(self_def_id: Option<DefId>, trait_: &Path, self_type
             .map_or(!self_type.is_self_type(), |(id, trait_)| id != trait_)
 }
 
+// FIXME: Generalize to `clean_middle_projection_term`
 fn projection_to_path_segment<'tcx>(
     ty: ty::Binder<'tcx, ty::AliasTy<'tcx>>,
     cx: &mut DocContext<'tcx>,
@@ -784,19 +701,19 @@ pub(crate) fn clean_generics<'tcx>(
     }
 }
 
+// FIXME(fmease): Explain why we need to take `predicates`, too!
 fn clean_ty_generics<'tcx>(
     cx: &mut DocContext<'tcx>,
-    gens: &ty::Generics,
-    preds: ty::GenericPredicates<'tcx>,
+    generics: &'tcx ty::Generics,
+    predicates: ty::GenericPredicates<'tcx>,
 ) -> Generics {
-    // Don't populate `cx.impl_trait_bounds` before cleaning where clauses,
-    // since `clean_predicate` would consume them.
-    let mut impl_trait = BTreeMap::<u32, Vec<GenericBound>>::default();
+    let mut apits = BTreeMap::new();
 
-    let params: ThinVec<_> = gens
+    let params = generics
         .own_params
         .iter()
         .filter(|param| match param.kind {
+            // FIXME(fmease): Explain why we can get anonymous lifetimes.
             ty::GenericParamDefKind::Lifetime => !param.is_anonymous_lifetime(),
             ty::GenericParamDefKind::Type { synthetic, .. } => {
                 if param.name == kw::SelfUpper {
@@ -804,7 +721,7 @@ fn clean_ty_generics<'tcx>(
                     return false;
                 }
                 if synthetic {
-                    impl_trait.insert(param.index, vec![]);
+                    apits.insert(param.index, Vec::new());
                     return false;
                 }
                 true
@@ -814,115 +731,70 @@ fn clean_ty_generics<'tcx>(
         .map(|param| clean_generic_param_def(param, ParamDefaults::Yes, cx))
         .collect();
 
-    // param index -> [(trait DefId, associated type name & generics, term)]
-    let mut impl_trait_proj =
-        FxHashMap::<u32, Vec<(DefId, PathSegment, ty::Binder<'_, ty::Term<'_>>)>>::default();
-
-    let where_predicates = preds
-        .predicates
-        .iter()
-        .flat_map(|(pred, _)| {
-            let mut projection = None;
-            let param_idx = (|| {
-                let bound_p = pred.kind();
-                match bound_p.skip_binder() {
-                    ty::ClauseKind::Trait(pred) => {
-                        if let ty::Param(param) = pred.self_ty().kind() {
-                            return Some(param.index);
-                        }
-                    }
-                    ty::ClauseKind::TypeOutlives(ty::OutlivesPredicate(ty, _reg)) => {
-                        if let ty::Param(param) = ty.kind() {
-                            return Some(param.index);
-                        }
-                    }
-                    ty::ClauseKind::Projection(p) => {
-                        if let ty::Param(param) = p.projection_term.self_ty().kind() {
-                            projection = Some(bound_p.rebind(p));
-                            return Some(param.index);
-                        }
-                    }
-                    _ => (),
-                }
-
-                None
-            })();
-
-            if let Some(param_idx) = param_idx
-                && let Some(bounds) = impl_trait.get_mut(&param_idx)
-            {
-                let pred = clean_predicate(*pred, cx)?;
-
-                bounds.extend(pred.get_bounds().into_iter().flatten().cloned());
-
-                if let Some(proj) = projection
-                    && let lhs = clean_projection(
-                        proj.map_bound(|p| {
-                            // FIXME: This needs to be made resilient for `AliasTerm`s that
-                            // are associated consts.
-                            p.projection_term.expect_ty(cx.tcx)
-                        }),
-                        cx,
-                        None,
-                    )
-                    && let Some((_, trait_did, name)) = lhs.projection()
-                {
-                    impl_trait_proj.entry(param_idx).or_default().push((
-                        trait_did,
-                        name,
-                        proj.map_bound(|p| p.term),
-                    ));
-                }
-
-                return None;
-            }
-
-            Some(pred)
-        })
-        .collect::<Vec<_>>();
-
-    for (idx, mut bounds) in impl_trait {
-        let mut has_sized = false;
-        bounds.retain(|b| {
-            if b.is_sized_bound(cx) {
-                has_sized = true;
-                false
-            } else {
-                true
-            }
-        });
-        if !has_sized {
-            bounds.push(GenericBound::maybe_sized(cx));
-        }
-
-        // Move trait bounds to the front.
-        bounds.sort_by_key(|b| !b.is_trait_bound());
-
-        // Add back a `Sized` bound if there are no *trait* bounds remaining (incl. `?Sized`).
-        // Since all potential trait bounds are at the front we can just check the first bound.
-        if bounds.first().map_or(true, |b| !b.is_trait_bound()) {
-            bounds.insert(0, GenericBound::sized(cx));
-        }
-
-        if let Some(proj) = impl_trait_proj.remove(&idx) {
-            for (trait_did, name, rhs) in proj {
-                let rhs = clean_middle_term(rhs, cx);
-                simplify::merge_bounds(cx, &mut bounds, trait_did, name, &rhs);
-            }
-        }
-
-        cx.impl_trait_bounds.insert(idx.into(), bounds);
+    struct ApitFinder<'a, 'tcx> {
+        apits: &'a BTreeMap<u32, Vec<(ty::Clause<'tcx>, rustc_span::Span)>>,
     }
 
-    // Now that `cx.impl_trait_bounds` is populated, we can process
-    // remaining predicates which could contain `impl Trait`.
-    let where_predicates =
-        where_predicates.into_iter().flat_map(|p| clean_predicate(*p, cx)).collect();
+    impl<'tcx> ty::TypeVisitor<TyCtxt<'tcx>> for ApitFinder<'_, 'tcx> {
+        type Result = ControlFlow<u32>;
 
-    let mut generics = Generics { params, where_predicates };
-    simplify::sized_bounds(cx, &mut generics);
-    generics.where_predicates = simplify::where_clauses(cx, generics.where_predicates);
-    generics
+        fn visit_ty(&mut self, ty: Ty<'tcx>) -> Self::Result {
+            match ty.kind() {
+                ty::Param(param_ty) => {
+                    if self.apits.contains_key(&param_ty.index) {
+                        // FIXME: rephrase (there's no pred in scope)
+                        // A predicate may at most contain a single APIT.
+                        return ControlFlow::Break(param_ty.index);
+                    }
+                }
+                _ if ty.has_param() => return ty.super_visit_with(self),
+                _ => {}
+            }
+            ControlFlow::Continue(())
+        }
+    }
+
+    // FIXME: explainer
+    let predicates = predicates
+        .predicates
+        .iter()
+        .copied()
+        .filter(|&(predicate, span)| {
+            if let ControlFlow::Break(index) =
+                predicate.visit_with(&mut ApitFinder { apits: &apits })
+            {
+                apits.get_mut(&index).unwrap().push((predicate, span));
+                return false;
+            }
+            true
+        })
+        .collect();
+
+    // FIXME: does this handle Sized/?Sized properly?
+    for (index, predicates) in apits {
+        // FIXME: fix up API of clean_pred instead
+        let mut where_predicates = modern::clean_predicates(cx, predicates);
+        let Some(WherePredicate::BoundPredicate { bounds, .. }) = where_predicates.pop() else {
+            unreachable!()
+        };
+        cx.impl_trait_bounds.insert(index.into(), bounds);
+    }
+
+    let where_predicates = modern::clean_predicates(cx, predicates);
+
+    // FIXME: we no longer have access to `sized: UnordMap`
+    // for param in &generics.own_params {
+    //     if !sized.contains(&param.index) {
+    //         // FIXME: is this correct if we have parent generics?
+    //         where_predicates.push(WherePredicate::BoundPredicate {
+    //             ty: Type::Generic(param.name),
+    //             bounds: vec![GenericBound::maybe_sized(cx)],
+    //             bound_params: Vec::new(),
+    //         })
+    //     }
+    // }
+
+    Generics { params, where_predicates }
 }
 
 fn clean_ty_alias_inner_type<'tcx>(
@@ -1379,6 +1251,7 @@ pub(crate) fn clean_middle_assoc_item<'tcx>(
                 TyMethodItem(item)
             }
         }
+        // FIXME: Rewrite this!!!
         ty::AssocKind::Type => {
             let my_name = assoc_item.name;
 
@@ -2124,7 +1997,8 @@ pub(crate) fn clean_middle_ty<'tcx>(
                 })
                 .collect::<Vec<_>>();
 
-            let bindings = obj
+            // FIXME: yooo
+            let constraints = obj
                 .projection_bounds()
                 .map(|pb| AssocItemConstraint {
                     assoc: projection_to_path_segment(
@@ -2160,7 +2034,7 @@ pub(crate) fn clean_middle_ty<'tcx>(
                 .collect();
             let late_bound_regions = late_bound_regions.into_iter().collect();
 
-            let path = clean_middle_path(cx, did, false, bindings, args);
+            let path = clean_middle_path(cx, did, false, constraints, args);
             bounds.insert(0, PolyTrait { trait_: path, generic_params: late_bound_regions });
 
             DynTrait(bounds, lifetime)
@@ -2243,8 +2117,7 @@ pub(crate) fn clean_middle_ty<'tcx>(
                     .tcx
                     .explicit_item_bounds(def_id)
                     .iter_instantiated_copied(cx.tcx, args)
-                    .map(|(bound, _)| bound)
-                    .collect::<Vec<_>>();
+                    .collect();
                 let ty = clean_middle_opaque_bounds(cx, bounds);
                 if let Some(count) = cx.current_type_aliases.get_mut(&def_id) {
                     *count -= 1;
@@ -2268,60 +2141,18 @@ pub(crate) fn clean_middle_ty<'tcx>(
 
 fn clean_middle_opaque_bounds<'tcx>(
     cx: &mut DocContext<'tcx>,
-    bounds: Vec<ty::Clause<'tcx>>,
+    predicates: Vec<(ty::Clause<'tcx>, rustc_span::Span)>,
 ) -> Type {
-    let mut has_sized = false;
-    let mut bounds = bounds
-        .iter()
-        .filter_map(|bound| {
-            let bound_predicate = bound.kind();
-            let trait_ref = match bound_predicate.skip_binder() {
-                ty::ClauseKind::Trait(tr) => bound_predicate.rebind(tr.trait_ref),
-                ty::ClauseKind::TypeOutlives(ty::OutlivesPredicate(_ty, reg)) => {
-                    return clean_middle_region(reg).map(GenericBound::Outlives);
-                }
-                _ => return None,
-            };
+    // FIXME: fix up API of clean_pred instead
+    // FIXME: we currentyl elide `Sized` bc it looks for bounded_ty=`ty::Param` but we don't
+    // care about that here bc we want to look for bounded_ty=Alias(Opaque) (which we can
+    // actually assume / don't need to check)
+    let mut where_predicates = modern::clean_predicates(cx, predicates);
+    let Some(WherePredicate::BoundPredicate { mut bounds, .. }) = where_predicates.pop() else {
+        unreachable!()
+    };
 
-            if let Some(sized) = cx.tcx.lang_items().sized_trait()
-                && trait_ref.def_id() == sized
-            {
-                has_sized = true;
-                return None;
-            }
-
-            let bindings: ThinVec<_> = bounds
-                .iter()
-                .filter_map(|bound| {
-                    if let ty::ClauseKind::Projection(proj) = bound.kind().skip_binder() {
-                        if proj.projection_term.trait_ref(cx.tcx) == trait_ref.skip_binder() {
-                            Some(AssocItemConstraint {
-                                assoc: projection_to_path_segment(
-                                    // FIXME: This needs to be made resilient for `AliasTerm`s that
-                                    // are associated consts.
-                                    bound.kind().rebind(proj.projection_term.expect_ty(cx.tcx)),
-                                    cx,
-                                ),
-                                kind: AssocItemConstraintKind::Equality {
-                                    term: clean_middle_term(bound.kind().rebind(proj.term), cx),
-                                },
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            Some(clean_poly_trait_ref_with_constraints(cx, trait_ref, bindings))
-        })
-        .collect::<Vec<_>>();
-
-    if !has_sized {
-        bounds.push(GenericBound::maybe_sized(cx));
-    }
+    // FIXME: rewrite this, too
 
     // Move trait bounds to the front.
     bounds.sort_by_key(|b| !b.is_trait_bound());
