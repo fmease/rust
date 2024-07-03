@@ -214,10 +214,6 @@ impl<'hir> PathSegment<'hir> {
         PathSegment { ident, hir_id, res, infer_args: true, args: None }
     }
 
-    pub fn invalid() -> Self {
-        Self::new(Ident::empty(), HirId::INVALID, Res::Err)
-    }
-
     pub fn args(&self) -> &GenericArgs<'hir> {
         if let Some(ref args) = self.args {
             args
@@ -1703,7 +1699,10 @@ impl Expr<'_> {
     pub fn is_place_expr(&self, mut allow_projections_from: impl FnMut(&Self) -> bool) -> bool {
         match self.kind {
             ExprKind::Path(QPath::Resolved(_, ref path)) => {
-                matches!(path.res, Res::Local(..) | Res::Def(DefKind::Static { .. }, _) | Res::Err)
+                matches!(
+                    path.res,
+                    Res::Local(..) | Res::Def(DefKind::Static { .. }, _) | Res::Err(_)
+                )
             }
 
             // Type ascription inherits its place expression kind from its
@@ -3059,7 +3058,7 @@ impl TraitRef<'_> {
     pub fn trait_def_id(&self) -> Option<DefId> {
         match self.path.res {
             Res::Def(DefKind::Trait | DefKind::TraitAlias, did) => Some(did),
-            Res::Err => None,
+            Res::Err(_) => None,
             res => panic!("{res:?} did not resolve to a trait or trait alias"),
         }
     }

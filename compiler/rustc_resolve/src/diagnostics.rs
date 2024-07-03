@@ -1854,7 +1854,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
         while let Some(binding) = next_binding {
             let name = next_ident;
             next_binding = match binding.kind {
-                _ if res == Res::Err => None,
+                _ if res.is_err() => None,
                 NameBindingKind::Import { binding, import, .. } => match import.kind {
                     _ if binding.span.is_dummy() => None,
                     ImportKind::Single { source, .. } => {

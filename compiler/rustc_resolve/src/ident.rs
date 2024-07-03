@@ -295,7 +295,8 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
         assert!(ns == TypeNS || ns == ValueNS);
         let orig_ident = ident;
         if ident.name == kw::Empty {
-            return Some(LexicalScopeBinding::Res(Res::Err));
+            // FIXME(fmease): Figure out when this is reached to provide a good message (...).
+            return Some(LexicalScopeBinding::Res(Res::Err(self.dcx().delayed_bug("xxx"))));
         }
         let (general_span, normalized_span) = if ident.name == kw::SelfUpper {
             // FIXME(jseyfried) improve `Self` hygiene
@@ -1143,8 +1144,10 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                 };
                 self.report_error(span, res_error);
             }
-            assert_eq!(res, Res::Err);
-            return Res::Err;
+            match res {
+                Res::Err(guar) => return Res::Err(guar),
+                res => bug!("unexpected resolution: {res:?}"),
+            }
         }
 
         match res {
@@ -1197,7 +1200,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                                 };
                                 self.report_error(span, resolution_error);
                             }
-                            return Res::Err;
+                            return Res::Err(todo!()); // FIXME
                         }
                         RibKind::ConstParamTy => {
                             if let Some(span) = finalize {
@@ -1209,19 +1212,19 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                                     },
                                 );
                             }
-                            return Res::Err;
+                            return Res::Err(todo!()); // FIXME
                         }
                         RibKind::InlineAsmSym => {
                             if let Some(span) = finalize {
                                 self.report_error(span, InvalidAsmSym);
                             }
-                            return Res::Err;
+                            return Res::Err(todo!()); // FIXME
                         }
                     }
                 }
                 if let Some((span, res_err)) = res_err {
-                    self.report_error(span, res_err);
-                    return Res::Err;
+                    let guar = self.report_error(span, res_err);
+                    return Res::Err(guar);
                 }
             }
             Res::Def(DefKind::TyParam, _) | Res::SelfTyParam { .. } | Res::SelfTyAlias { .. } => {
@@ -1582,8 +1585,8 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                         }
                         let res = Res::NonMacroAttr(NonMacroAttrKind::Tool);
                         return PathResult::NonModule(PartialRes::new(res));
-                    } else if res == Res::Err {
-                        return PathResult::NonModule(PartialRes::new(Res::Err));
+                    } else if let Res::Err(guar) = res {
+                        return PathResult::NonModule(PartialRes::new(Res::Err(guar)));
                     } else if opt_ns.is_some() && (is_last || maybe_assoc) {
                         self.lint_if_path_starts_with_module(finalize, path, second_binding);
                         record_segment_res(self, res);

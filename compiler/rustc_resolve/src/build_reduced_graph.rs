@@ -288,16 +288,15 @@ impl<'a, 'b, 'tcx> BuildReducedGraphVisitor<'a, 'b, 'tcx> {
                             self.r.record_partial_res(id, PartialRes::new(res));
                         }
                         if module.is_normal() {
-                            match res {
-                                Res::Err => Ok(ty::Visibility::Public),
-                                _ => {
-                                    let vis = ty::Visibility::Restricted(res.def_id());
-                                    if self.r.is_accessible_from(vis, parent_scope.module) {
-                                        Ok(vis.expect_local())
-                                    } else {
-                                        Err(VisResolutionError::AncestorOnly(path.span))
-                                    }
+                            if !res.is_err() {
+                                let vis = ty::Visibility::Restricted(res.def_id());
+                                if self.r.is_accessible_from(vis, parent_scope.module) {
+                                    Ok(vis.expect_local())
+                                } else {
+                                    Err(VisResolutionError::AncestorOnly(path.span))
                                 }
+                            } else {
+                                Ok(ty::Visibility::Public)
                             }
                         } else {
                             expected_found_error(res)
@@ -1011,7 +1010,7 @@ impl<'a, 'b, 'tcx> BuildReducedGraphVisitor<'a, 'b, 'tcx> {
             | Res::SelfTyParam { .. }
             | Res::SelfTyAlias { .. }
             | Res::SelfCtor(..)
-            | Res::Err => bug!("unexpected resolution: {:?}", res),
+            | Res::Err(_) => bug!("unexpected resolution: {res:?}"),
         }
     }
 

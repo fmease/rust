@@ -2154,7 +2154,12 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                     span,
                     def_id,
                     &[],
-                    &hir::PathSegment::invalid(),
+                    // FIXME: Don't use Res::Err but "Res::Untermined" or "Res::Dummy"
+                    &hir::PathSegment::new(
+                        Ident::empty(),
+                        HirId::INVALID,
+                        Res::Err((|| -> () { todo!() })()),
+                    ),
                     None,
                     ty::BoundConstness::NotConst,
                 );

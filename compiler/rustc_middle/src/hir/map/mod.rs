@@ -929,7 +929,7 @@ impl<'hir> Map<'hir> {
 
     pub fn res_span(self, res: Res) -> Option<Span> {
         match res {
-            Res::Err => None,
+            Res::Err(_) => None,
             Res::Local(id) => Some(self.span(id)),
             res => self.span_if_local(res.opt_def_id()?),
         }

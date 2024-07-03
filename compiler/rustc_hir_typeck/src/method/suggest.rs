@@ -1379,8 +1379,12 @@ impl<'a, 'tcx> FnCtxt<'a, 'tcx> {
             // mutability difference, like calling a method on `Pin<&mut Self>` that is on
             // `Pin<&Self>`.
             if targs.len() == 1 {
-                let mut item_segment = hir::PathSegment::invalid();
-                item_segment.ident = item_name;
+                // FIXME(fmease): Don't use Res::Err
+                let item_segment = hir::PathSegment::new(
+                    item_name,
+                    HirId::INVALID,
+                    hir::def::Res::Err((|| -> () { todo!() })()),
+                );
                 for t in [Ty::new_mut_ref, Ty::new_imm_ref, |_, _, t| t] {
                     let new_args =
                         tcx.mk_args_from_iter(targs.iter().map(|arg| match arg.as_type() {
