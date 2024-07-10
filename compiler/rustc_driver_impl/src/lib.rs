@@ -759,8 +759,12 @@ fn print_crate_info(
                     // no crate attributes, print out an error and exit
                     return Compilation::Continue;
                 };
-                let t_outputs = rustc_interface::util::build_output_filenames(attrs, sess);
-                let crate_name = passes::get_crate_name(sess, attrs);
+                let (crate_name, crate_name_origin) = passes::get_crate_name(sess, attrs);
+                let t_outputs = rustc_interface::util::build_output_filenames(
+                    sess,
+                    crate_name,
+                    crate_name_origin,
+                );
                 let crate_types = collect_crate_types(sess, attrs);
                 for &style in &crate_types {
                     let fname = rustc_session::output::filename_for_input(
@@ -774,7 +778,8 @@ fn print_crate_info(
                     // no crate attributes, print out an error and exit
                     return Compilation::Continue;
                 };
-                println_info!("{}", passes::get_crate_name(sess, attrs));
+                let (crate_name, _) = passes::get_crate_name(sess, attrs);
+                println_info!("{crate_name}");
             }
             Cfg => {
                 let mut cfgs = sess

@@ -660,7 +660,7 @@ pub(crate) fn create_global_ctxt<'tcx>(
 
     let pre_configured_attrs = rustc_expand::config::pre_configure_attrs(sess, &krate.attrs);
 
-    let crate_name = get_crate_name(sess, &pre_configured_attrs);
+    let (crate_name, crate_name_origin) = get_crate_name(sess, &pre_configured_attrs);
     let crate_types = collect_crate_types(sess, &pre_configured_attrs);
     let stable_crate_id = StableCrateId::new(
         crate_name,
@@ -668,7 +668,8 @@ pub(crate) fn create_global_ctxt<'tcx>(
         sess.opts.cg.metadata.clone(),
         sess.cfg_version,
     );
-    let outputs = util::build_output_filenames(&pre_configured_attrs, sess);
+    let outputs = util::build_output_filenames(sess, crate_name, crate_name_origin);
+
     let dep_graph = setup_dep_graph(sess, crate_name)?;
 
     let cstore =
@@ -1044,7 +1045,7 @@ pub(crate) fn start_codegen<'tcx>(
 }
 
 /// Compute and validate the crate name.
-pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> Symbol {
+pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> (Symbol, CrateNameOrigin) {
     // We unconditionally validate all `#![crate_name]`s even if a crate name was
     // set on the command line via `--crate-name` which we prioritize over the
     // crate attributes. We perform the validation here instead of later to ensure
@@ -1053,9 +1054,9 @@ pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> Symbol 
     let attr_crate_name =
         validate_and_find_value_str_builtin_attr(sym::crate_name, sess, krate_attrs);
 
-    let validate = |name, span| {
+    let validate = |name, span, origin| {
         rustc_session::output::validate_crate_name(sess, name, span);
-        name
+        (name, origin)
     };
 
     if let Some(crate_name) = &sess.opts.crate_name {
@@ -1069,11 +1070,11 @@ pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> Symbol 
                 attr_crate_name,
             });
         }
-        return validate(crate_name, None);
+        return validate(crate_name, None, CrateNameOrigin::CliOpt);
     }
 
     if let Some((crate_name, span)) = attr_crate_name {
-        return validate(crate_name, Some(span));
+        return validate(crate_name, Some(span), CrateNameOrigin::CrateAttr);
     }
 
     if let Input::File(ref path) = sess.io.input
@@ -1082,11 +1083,19 @@ pub fn get_crate_name(sess: &Session, krate_attrs: &[ast::Attribute]) -> Symbol 
         if file_stem.starts_with('-') {
             sess.dcx().emit_err(errors::CrateNameInvalid { crate_name: file_stem });
         } else {
-            return validate(Symbol::intern(&file_stem.replace('-', "_")), None);
+            let crate_name = file_stem.replace('-', "_");
+            return validate(Symbol::intern(&crate_name), None, CrateNameOrigin::InputFile);
         }
     }
 
-    Symbol::intern("rust_out")
+    (Symbol::intern("rust_out"), CrateNameOrigin::Fallback)
+}
+
+pub enum CrateNameOrigin {
+    CliOpt,
+    CrateAttr,
+    InputFile,
+    Fallback,
 }
 
 fn get_recursion_limit(krate_attrs: &[ast::Attribute], sess: &Session) -> Limit {
