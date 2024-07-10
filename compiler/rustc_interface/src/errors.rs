@@ -5,6 +5,21 @@ use std::io;
 use std::path::Path;
 
 #[derive(Diagnostic)]
+#[diag(interface_crate_name_does_not_match)]
+pub(crate) struct CrateNameDoesNotMatch {
+    #[primary_span]
+    pub(crate) span: Span,
+    pub(crate) crate_name: Symbol,
+    pub(crate) attr_crate_name: Symbol,
+}
+
+#[derive(Diagnostic)]
+#[diag(interface_crate_name_invalid)]
+pub(crate) struct CrateNameInvalid<'a> {
+    pub(crate) crate_name: &'a str,
+}
+
+#[derive(Diagnostic)]
 #[diag(interface_ferris_identifier)]
 pub struct FerrisIdentifier {
     #[primary_span]
