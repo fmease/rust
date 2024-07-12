@@ -195,7 +195,8 @@ fn clean_param_env<'tcx>(
         .map(|pred| (pred, rustc_span::DUMMY_SP))
         .collect();
 
-    let mut where_predicates = super::modern::clean_predicates(cx, predicates);
+    let mut where_predicates =
+        super::modern::clean_predicates(cx, predicates, &mut super::modern::WhereClause::default());
     // FIXME: these no longer get "simplif[ied]::where_clauses"
     where_predicates.extend(clean_region_outlives_constraints(&region_data, generics));
 

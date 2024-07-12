@@ -770,26 +770,40 @@ fn clean_ty_generics<'tcx>(
     // FIXME: does this handle Sized/?Sized properly?
     for (index, predicates) in apits {
         // FIXME: fix up API of clean_pred instead
-        let mut where_predicates = modern::clean_predicates(cx, predicates);
-        let Some(WherePredicate::BoundPredicate { bounds, .. }) = where_predicates.pop() else {
-            unreachable!()
+        let mut where_predicates =
+            modern::clean_predicates(cx, predicates, &mut modern::Apit::default());
+        let mut bounds = match where_predicates.pop() {
+            Some(WherePredicate::BoundPredicate { bounds, .. }) => bounds,
+            Some(_) => unreachable!(),
+            None => Vec::new(),
         };
+
+        // Add back a `Sized` bound if there are no *trait* bounds remaining (incl. `?Sized`).
+        if bounds.iter().all(|bound| !bound.is_trait_bound()) {
+            bounds.insert(0, GenericBound::sized(cx));
+        }
         cx.impl_trait_bounds.insert(index.into(), bounds);
     }
 
-    let where_predicates = modern::clean_predicates(cx, predicates);
+    let mut cleaner = modern::WhereClause::default();
+    let mut where_predicates = modern::clean_predicates(cx, predicates, &mut cleaner);
 
-    // FIXME: we no longer have access to `sized: UnordMap`
-    // for param in &generics.own_params {
-    //     if !sized.contains(&param.index) {
-    //         // FIXME: is this correct if we have parent generics?
-    //         where_predicates.push(WherePredicate::BoundPredicate {
-    //             ty: Type::Generic(param.name),
-    //             bounds: vec![GenericBound::maybe_sized(cx)],
-    //             bound_params: Vec::new(),
-    //         })
-    //     }
-    // }
+    // FIXME: This adds extra clauses, instead of modifying existing bounds
+    //        Smh. make clean_preds add those bounds onto existing ones if available
+    // NOTE: Maybe we should just cave in an add an `Option<ty::Generics>` param to clean_preds
+    // FIXME: This is so stupid
+    for param in &generics.own_params {
+        if let ty::GenericParamDefKind::Type { synthetic: false, .. } = param.kind
+            && !cleaner.sized.contains(&param.index)
+        {
+            // FIXME: is this correct if we have parent generics?
+            where_predicates.push(WherePredicate::BoundPredicate {
+                ty: Type::Generic(param.name),
+                bounds: vec![GenericBound::maybe_sized(cx)],
+                bound_params: Vec::new(),
+            })
+        }
+    }
 
     Generics { params, where_predicates }
 }
@@ -2160,20 +2174,23 @@ fn clean_middle_opaque_bounds<'tcx>(
     // FIXME: we currentyl elide `Sized` bc it looks for bounded_ty=`ty::Param` but we don't
     // care about that here bc we want to look for bounded_ty=Alias(Opaque) (which we can
     // actually assume / don't need to check)
-    let mut where_predicates = modern::clean_predicates(cx, predicates);
-    let Some(WherePredicate::BoundPredicate { mut bounds, .. }) = where_predicates.pop() else {
-        unreachable!()
+    // FIXME: Make it so clean_pred inserts `Sized` before any outlives bounds
+    let mut where_predicates =
+        modern::clean_predicates(cx, predicates, &mut modern::OpaqueTy::default());
+    let mut bounds = match where_predicates.pop() {
+        Some(WherePredicate::BoundPredicate { bounds, .. }) => bounds,
+        Some(_) => unreachable!(),
+        None => Vec::new(),
     };
 
     // FIXME: rewrite this, too
     // <LEGACY>
 
-    // Move trait bounds to the front.
-    bounds.sort_by_key(|b| !b.is_trait_bound());
+    // // Move trait bounds to the front.
+    // bounds.sort_by_key(|b| !b.is_trait_bound());
 
     // Add back a `Sized` bound if there are no *trait* bounds remaining (incl. `?Sized`).
-    // Since all potential trait bounds are at the front we can just check the first bound.
-    if bounds.first().map_or(true, |b| !b.is_trait_bound()) {
+    if bounds.iter().all(|bound| !bound.is_trait_bound()) {
         bounds.insert(0, GenericBound::sized(cx));
     }
 
