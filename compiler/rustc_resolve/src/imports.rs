@@ -319,7 +319,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
         self.set_binding_parent_module(binding, module);
         self.update_resolution(module, key, warn_ambiguity, |this, resolution| {
             if let Some(old_binding) = resolution.binding {
-                if res == Res::Err && old_binding.res() != Res::Err {
+                if res.is_err() && !old_binding.res().is_err() {
                     // Do not override real bindings with `Res::Err`s from error recovery.
                     return Ok(());
                 }
@@ -612,7 +612,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                 if let Some(binding) = resolution.binding {
                     if let NameBindingKind::Import { import, .. } = binding.kind
                         && let Some((amb_binding, _)) = binding.ambiguity
-                        && binding.res() != Res::Err
+                        && !binding.res().is_err()
                         && exported_ambiguities.contains(&binding)
                     {
                         self.lint_buffer.buffer_lint(
@@ -639,8 +639,8 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                             NameBindingKind::Import { import, .. } => import.id(),
                         };
 
-                        if binding.res() != Res::Err
-                            && glob_binding.res() != Res::Err
+                        if !binding.res().is_err()
+                            && !glob_binding.res().is_err()
                             && let NameBindingKind::Import { import: glob_import, .. } =
                                 glob_binding.kind
                             && let Some(binding_id) = binding_id
@@ -964,7 +964,7 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                 return None;
             }
             PathResult::NonModule(partial_res) => {
-                if no_ambiguity && partial_res.full_res() != Some(Res::Err) {
+                if no_ambiguity && !matches!(partial_res.full_res(), Some(Res::Err(_))) {
                     // Check if there are no ambiguities and the result is not dummy.
                     assert!(import.imported_module.get().is_none());
                 }
@@ -1082,9 +1082,10 @@ impl<'a, 'tcx> Resolver<'a, 'tcx> {
                             initial_binding.res()
                         });
                         let res = binding.res();
-                        let has_ambiguity_error =
-                            this.ambiguity_errors.iter().any(|error| !error.warning);
-                        if res == Res::Err || has_ambiguity_error {
+                        if let Res::Err(_guar) = res {
+                            return;
+                        }
+                        if this.ambiguity_errors.iter().any(|error| !error.warning) {
                             this.dcx()
                                 .span_delayed_bug(import.span, "some error happened for an import");
                             return;

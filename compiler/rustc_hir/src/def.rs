@@ -9,7 +9,7 @@ use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 use rustc_span::def_id::{DefId, LocalDefId};
 use rustc_span::hygiene::MacroKind;
 use rustc_span::symbol::kw;
-use rustc_span::Symbol;
+use rustc_span::{ErrorGuaranteed, Symbol};
 
 use std::array::IntoIter;
 use std::fmt::Debug;
@@ -464,7 +464,7 @@ pub enum Res<Id = hir::HirId> {
     /// of the compiler won't crash and can instead report more errors.
     ///
     /// **Not bound to a specific namespace.**
-    Err,
+    Err(ErrorGuaranteed),
 }
 
 /// The result of resolving a path before lowering to HIR,
@@ -497,7 +497,7 @@ impl PartialRes {
 
     #[inline]
     pub fn with_unresolved_segments(base_res: Res<NodeId>, mut unresolved_segments: usize) -> Self {
-        if base_res == Res::Err {
+        if base_res.is_err() {
             unresolved_segments = 0
         }
         PartialRes { base_res, unresolved_segments }
@@ -678,7 +678,7 @@ impl<Id> Res<Id> {
             | Res::SelfCtor(..)
             | Res::ToolMod
             | Res::NonMacroAttr(..)
-            | Res::Err => None,
+            | Res::Err(_) => None,
         }
     }
 
@@ -688,6 +688,10 @@ impl<Id> Res<Id> {
             Res::Def(DefKind::Mod, id) => Some(id),
             _ => None,
         }
+    }
+
+    pub fn is_err(&self) -> bool {
+        matches!(self, Res::Err(_))
     }
 
     /// A human readable name for the res kind ("function", "module", etc.).
@@ -700,7 +704,7 @@ impl<Id> Res<Id> {
             Res::SelfTyParam { .. } | Res::SelfTyAlias { .. } => "self type",
             Res::ToolMod => "tool module",
             Res::NonMacroAttr(attr_kind) => attr_kind.descr(),
-            Res::Err => "unresolved item",
+            Res::Err(_) => "unresolved item",
         }
     }
 
@@ -709,7 +713,7 @@ impl<Id> Res<Id> {
         match *self {
             Res::Def(kind, _) => kind.article(),
             Res::NonMacroAttr(kind) => kind.article(),
-            Res::Err => "an",
+            Res::Err(_) => "an",
             _ => "a",
         }
     }
@@ -726,7 +730,7 @@ impl<Id> Res<Id> {
             }
             Res::ToolMod => Res::ToolMod,
             Res::NonMacroAttr(attr_kind) => Res::NonMacroAttr(attr_kind),
-            Res::Err => Res::Err,
+            Res::Err(guar) => Res::Err(guar),
         }
     }
 
@@ -742,7 +746,7 @@ impl<Id> Res<Id> {
             }
             Res::ToolMod => Res::ToolMod,
             Res::NonMacroAttr(attr_kind) => Res::NonMacroAttr(attr_kind),
-            Res::Err => Res::Err,
+            Res::Err(guar) => Res::Err(guar),
         })
     }
 
@@ -762,7 +766,7 @@ impl<Id> Res<Id> {
         }
     }
 
-    /// Returns `None` if this is `Res::Err`
+    /// Returns `None` if this is [`Res::Err`].
     pub fn ns(&self) -> Option<Namespace> {
         match self {
             Res::Def(kind, ..) => kind.ns(),
@@ -771,11 +775,11 @@ impl<Id> Res<Id> {
             }
             Res::SelfCtor(..) | Res::Local(..) => Some(Namespace::ValueNS),
             Res::NonMacroAttr(..) => Some(Namespace::MacroNS),
-            Res::Err => None,
+            Res::Err(_) => None,
         }
     }
 
-    /// Always returns `true` if `self` is `Res::Err`
+    /// Always returns `true` if `self` is [`Res::Err`].
     pub fn matches_ns(&self, ns: Namespace) -> bool {
         self.ns().map_or(true, |actual_ns| actual_ns == ns)
     }

@@ -165,7 +165,7 @@ impl<'tcx> TyCtxt<'tcx> {
                 | DefKind::Impl { .. },
                 def_id,
             ) => Some(def_id),
-            Res::Err => None,
+            Res::Err(_) => None,
             _ => None,
         }
     }
