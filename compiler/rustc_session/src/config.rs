@@ -18,7 +18,9 @@ use rustc_feature::UnstableFeatures;
 use rustc_macros::{Decodable, Encodable, HashStable_Generic};
 use rustc_span::edition::{Edition, DEFAULT_EDITION, EDITION_NAME_LIST, LATEST_STABLE_EDITION};
 use rustc_span::source_map::FilePathMapping;
-use rustc_span::{FileName, FileNameDisplayPreference, RealFileName, SourceFileHashAlgorithm};
+use rustc_span::{
+    FileName, FileNameDisplayPreference, RealFileName, SourceFileHashAlgorithm, Symbol,
+};
 use rustc_target::spec::{FramePointer, LinkSelfContainedComponents, LinkerFeatures};
 use rustc_target::spec::{SplitDebuginfo, Target, TargetTriple};
 use std::collections::btree_map::{
@@ -945,7 +947,7 @@ impl OutFileName {
 #[derive(Clone, Hash, Debug, HashStable_Generic, Encodable, Decodable)]
 pub struct OutputFilenames {
     pub(crate) out_directory: PathBuf,
-    /// Crate name. Never contains '-'.
+    /// Crate name (must not contain `-`) plus extra (`-Cextra-filename`).
     crate_stem: String,
     /// Typically based on `.rs` input file name. Any '-' is preserved.
     filestem: String,
@@ -961,11 +963,11 @@ pub const DWARF_OBJECT_EXT: &str = "dwo";
 impl OutputFilenames {
     pub fn new(
         out_directory: PathBuf,
-        out_crate_name: String,
-        out_filestem: String,
+        crate_name: Symbol,
+        out_filestem: &str,
         single_output_file: Option<OutFileName>,
         temps_directory: Option<PathBuf>,
-        extra: String,
+        extra: &str,
         outputs: OutputTypes,
     ) -> Self {
         OutputFilenames {
@@ -973,7 +975,7 @@ impl OutputFilenames {
             single_output_file,
             temps_directory,
             outputs,
-            crate_stem: format!("{out_crate_name}{extra}"),
+            crate_stem: format!("{crate_name}{extra}"),
             filestem: format!("{out_filestem}{extra}"),
         }
     }
