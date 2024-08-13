@@ -258,7 +258,10 @@ impl<'tcx> TypeckResults<'tcx> {
             hir::QPath::Resolved(_, path) => path.res,
             hir::QPath::TypeRelative(..) | hir::QPath::LangItem(..) => self
                 .type_dependent_def(id)
-                .map_or(Res::Err, |(kind, def_id)| Res::Def(kind, def_id)),
+                // FIXME: use Res::Undetermined here (I guess???)
+                .map_or(Res::Err((|| -> ErrorGuaranteed { todo!() })()), |(kind, def_id)| {
+                    Res::Def(kind, def_id)
+                }),
         }
     }
 
