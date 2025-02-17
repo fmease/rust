@@ -29,7 +29,7 @@ use rustc_errors::{
     Applicability, Diag, DiagCtxtHandle, Diagnostic, ErrorGuaranteed, FatalError, Level, StashKey,
     struct_span_code_err,
 };
-use rustc_hir::def::{CtorKind, CtorOf, DefKind, Res};
+use rustc_hir::def::{CtorKind, CtorOf, DefKind, Namespace, Res};
 use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_hir::{self as hir, AnonConst, GenericArg, GenericArgs, HirId};
 use rustc_infer::infer::{InferCtxt, TyCtxtInferExt};
@@ -1322,10 +1322,7 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 },
             );
 
-            // FIXME(#97583): Print associated item bindings properly (i.e., not as equality
-            // predicates!).
-            // FIXME: Turn this into a structured, translatable & more actionable suggestion.
-            let mut where_bounds = vec![];
+            let mut disambiguated_bounds = vec![];
             for bound in [bound, bound2].into_iter().chain(matching_candidates) {
                 let bound_id = bound.def_id();
                 let assoc_item = tcx.associated_items(bound_id).find_by_ident_and_kind(
@@ -1339,11 +1336,20 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                 if let Some(bound_span) = bound_span {
                     err.span_label(
                         bound_span,
-                        format!("ambiguous `{assoc_ident}` from `{}`", bound.print_trait_sugared(),),
+                        format!("ambiguous `{assoc_ident}` from `{}`", bound.print_trait_sugared()),
                     );
                     if let Some(constraint) = constraint {
+                        // FIXME: If we're in a dyn-trait we need to adjust or suppress this suggestion!
+
+                        // FIXME: We should lower the *same* constraint in each loop iteration!!!
+                        //        Ideally, we wouldn't perform any fmt'ing&str_manip in this branch
+                        //        either and only at the very end where we actually decorate the diag!!!
                         match constraint.kind {
                             hir::AssocItemConstraintKind::Equality { term } => {
+                                use std::fmt::Write as _;
+
+                                // FIXME: Investigate if we can avoid lowering
+                                //        and simply print the HIR term.
                                 let term: ty::Term<'_> = match term {
                                     hir::Term::Ty(ty) => self.lower_ty(ty).into(),
                                     hir::Term::Const(ct) => {
@@ -1391,11 +1397,33 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                                 if term.references_error() {
                                     continue;
                                 }
-                                // FIXME(#97583): This isn't syntactically well-formed!
-                                where_bounds.push(format!(
-                                    "        T: {trait}::{assoc_ident} = {term}",
-                                    trait = bound.print_only_trait_path(),
-                                ));
+                                let mut cx = ty::print::FmtPrinter::new(tcx, Namespace::TypeNS);
+                                use ty::print::PrettyPrinter as _;
+                                _ = cx.pretty_print_in_binder(&bound.print_only_trait_path());
+                                let mut bound_str = cx.into_buffer();
+                                // FIXME: Hacky!
+                                // FIXME: Incorrect on "<>" (but POTP prolly won't emit that)
+                                if bound_str.ends_with('>') {
+                                    bound_str.pop();
+                                    bound_str.push_str(", ");
+                                } else {
+                                    bound_str.push('<');
+                                }
+                                // FIXME: Add note that the "candidates" are only trait refs
+                                // in this function as projections has been filtered out.
+                                // So in here we can't tell if that assoc would already be
+                                // constrained...
+                                // FIXME: We could eliminate candidates based on whether
+                                //        lower(constraint.gen_args) yields errors (arg mismatches)!
+                                _ = write!(
+                                    bound_str,
+                                    "{assoc_ident}{} = {term}>",
+                                    rustc_hir_pretty::generic_args_to_string(
+                                        &tcx,
+                                        constraint.gen_args
+                                    )
+                                );
+                                disambiguated_bounds.push(bound_str);
                             }
                             // FIXME: Provide a suggestion.
                             hir::AssocItemConstraintKind::Bound { bounds: _ } => {}
@@ -1416,14 +1444,35 @@ impl<'tcx> dyn HirTyLowerer<'tcx> + '_ {
                     ));
                 }
             }
-            if !where_bounds.is_empty() {
-                err.help(format!(
-                    "consider introducing a new type parameter `T` and adding `where` constraints:\
-                     \n    where\n        T: {qself_str},\n{}",
-                    where_bounds.join(",\n"),
-                ));
-                let reported = err.emit();
-                return Err(reported);
+            if !disambiguated_bounds.is_empty() {
+                // FIXME: restructure this so we can elim this unwrap (which we know can't panic)
+                let constraint = constraint.unwrap();
+
+                // FIXME: Wouldn't the span of the enclosing PolyTraitRef be more accurate?
+                //        PTRs don't have HirIds tho; so we'd need to do some ugly hacks to
+                //        obtain it from within here.
+                let trait_ref_sp = tcx
+                    .hir_parent_iter(constraint.hir_id)
+                    .find_map(|(hir_id, node)| match node {
+                        hir::Node::TraitRef(_) => Some(tcx.hir_span(hir_id)),
+                        _ => None,
+                    })
+                    .unwrap();
+
+                for bound in disambiguated_bounds {
+                    // Or "<splitting|moving> out the ambig assoc item constraints"
+                    // FIXME: Doesn't fully clean things up (may leave `X<>` behind as well as double commas)
+                    err.multipart_suggestion(
+                        "consider splitting up the trait bound to disambiguate",
+                        vec![
+                            (span, String::new()),
+                            (trait_ref_sp.shrink_to_hi(), format!(" + {bound}")),
+                        ],
+                        Applicability::MaybeIncorrect,
+                    );
+                }
+
+                return Err(err.emit());
             }
             err.emit();
         }
