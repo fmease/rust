@@ -900,6 +900,7 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                             self.tcx.parent(def_id),
                             &path.segments[..path.segments.len() - 1],
                         )),
+                        // FIXME(mgca): @fmease thinks we also need to handle AssocConsts here.
                         _ => None,
                     };
                     let object_lifetime_defaults =
@@ -914,17 +915,27 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                     }
                 }
             }
-            hir::QPath::TypeRelative(qself, segment) => {
-                // Resolving object lifetime defaults for type-relative paths requires full
-                // type-dependent resolution as performed by HIR ty lowering whose results
-                // we don't have access to (and we'd results for both FnCtxts and ItemCtxts).
-                // FIXME: Figure out if there's a feasible way to obtain the map of
-                //        type-dependent definitions.
+            &hir::QPath::TypeRelative(qself, segment) => {
+                if let Some(args) = segment.args {
+                    // FIXME(mgca): @fmease thinks we also need to handle AssocConsts here.
+                    let container = self
+                        .limited_resolve_type_relative_path(
+                            ty::AssocTag::Type,
+                            qself,
+                            segment,
+                            true,
+                        )
+                        .map(|(_, assoc_item)| (assoc_item.def_id, std::slice::from_ref(segment)));
+                    self.visit_segment_args(container, args);
+                }
+
+                // For forward compatibility we reject elided object lifetimes in the self type as
+                // "indeterminate" by passing `None`. `limited_resolve_type_relative_path` is not
+                // complete compared to HIR ty lowering's `lower_assoc_path_shared`, so we need to
+                // be conservative. Consider paths like `<dyn Trait>::X` which may resolve in the
+                // future (under IATs or mGCA (IACs)).
                 let scope = Scope::ObjectLifetimeDefault { lifetime: None, s: self.scope };
-                self.with(scope, |this| {
-                    this.visit_ty_unambig(qself);
-                    this.visit_path_segment(segment)
-                });
+                self.with(scope, |this| this.visit_ty_unambig(qself));
             }
             hir::QPath::LangItem(..) => {}
         }
@@ -933,7 +944,38 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
     fn visit_path(&mut self, path: &hir::Path<'tcx>, hir_id: HirId) {
         for (index, segment) in path.segments.iter().enumerate() {
             if let Some(args) = segment.args {
-                self.visit_segment_args(path, index, args);
+                // Figure out if this is an "eligible generic container" that brings along ambient object
+                // lifetime defaults for trait object types contained in any of the type arguments passed to
+                // it (any inner generic containers will of course end up shadowing that the default).
+                let depth = path.segments.len() - index - 1;
+                let container = match (path.res, depth) {
+                    (Res::Def(DefKind::AssocTy, def_id), 1) => {
+                        Some((self.tcx.parent(def_id), &path.segments[..=index]))
+                    }
+                    (Res::Def(DefKind::Variant, def_id), 0) => {
+                        Some((self.tcx.parent(def_id), path.segments))
+                    }
+                    // FIXME(trait_alias): Arguably, trait aliases are eligible generic containers.
+                    (
+                        Res::Def(
+                            DefKind::Struct
+                            | DefKind::Union
+                            | DefKind::Enum
+                            | DefKind::TyAlias
+                            | DefKind::Trait
+                            | DefKind::AssocTy,
+                            def_id,
+                        ),
+                        0,
+                    ) => Some((def_id, path.segments)),
+                    // Note: We don't need to care about definition kinds that may have generics if they
+                    // can only ever appear in positions where we can perform type inference (i.e., bodies).
+                    // FIXME(mgca): @fmease thinks that under (m)GCA we now also need to care about e.g.,
+                    //              type-level Consts (GCI) and AssocConsts (maybe also Fns, AssocFns) here
+                    //              since they appear outside of bodies (once the feature is more complete).
+                    _ => None,
+                };
+                self.visit_segment_args(container, args);
             }
         }
         if let Res::Def(DefKind::TyParam | DefKind::ConstParam, param_def_id) = path.res {
@@ -1652,8 +1694,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
     #[instrument(level = "debug", skip(self))]
     fn visit_segment_args(
         &mut self,
-        path: &hir::Path<'tcx>,
-        index: usize,
+        container: Option<(DefId, &[hir::PathSegment<'tcx>])>,
         generic_args: &'tcx hir::GenericArgs<'tcx>,
     ) {
         if let Some((inputs, output)) = generic_args.paren_sugar_inputs_output() {
@@ -1668,40 +1709,6 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                 self.visit_lifetime(lt);
             }
         }
-
-        // Figure out if this is an "eligible generic container" that brings along ambient object
-        // lifetime defaults for trait object types contained in any of the type arguments passed to
-        // it (any inner generic containers will of course end up shadowing that the default).
-        let depth = path.segments.len() - index - 1;
-        let container = match (path.res, depth) {
-            (Res::Def(DefKind::AssocTy, def_id), 1) => {
-                Some((self.tcx.parent(def_id), &path.segments[..=index]))
-            }
-            (Res::Def(DefKind::Variant, def_id), 0) => {
-                Some((self.tcx.parent(def_id), path.segments))
-            }
-            // FIXME(trait_alias): Arguably, trait aliases are eligible generic containers.
-            (
-                Res::Def(
-                    DefKind::Struct
-                    | DefKind::Union
-                    | DefKind::Enum
-                    | DefKind::TyAlias
-                    | DefKind::Trait
-                    | DefKind::AssocTy,
-                    def_id,
-                ),
-                0,
-            ) => Some((def_id, path.segments)),
-            // Note: We don't need to care about definition kinds that may have generics if they
-            // can only ever appear in positions where we can perform type inference (i.e., bodies).
-            // FIXME(mgca): @fmease thinks that under (m)GCA we now also need to care about e.g.,
-            //              type-level Consts (GCI) and AssocConsts (maybe also Fns, AssocFns) here
-            //              since they appear outside of bodies (once the feature is more complete).
-            _ => None,
-        };
-
-        debug!(?container);
 
         let object_lifetime_defaults = container.map_or_else(Vec::new, |(def_id, segs)| {
             self.compute_ambient_object_lifetime_defaults(def_id, segs)
@@ -2143,72 +2150,15 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                     matches!(args.parenthesized, hir::GenericArgsParentheses::ReturnTypeNotation)
                 }) =>
             {
-                // First, ignore a qself that isn't a type or `Self` param. Those are the
-                // only ones that support `T::Assoc` anyways in HIR lowering.
-                let hir::TyKind::Path(hir::QPath::Resolved(None, path)) = qself.kind else {
+                let Some((bound_vars, assoc_item)) = self.limited_resolve_type_relative_path(
+                    ty::AssocTag::Fn,
+                    qself,
+                    item_segment,
+                    false,
+                ) else {
                     return;
                 };
-                match path.res {
-                    Res::Def(DefKind::TyParam, _) | Res::SelfTyParam { trait_: _ } => {
-                        let mut bounds =
-                            self.for_each_trait_bound_on_res(path.res).filter_map(|trait_def_id| {
-                                BoundVarContext::supertrait_hrtb_vars(
-                                    self.tcx,
-                                    trait_def_id,
-                                    item_segment.ident,
-                                    ty::AssocTag::Fn,
-                                )
-                            });
-
-                        let Some((bound_vars, assoc_item)) = bounds.next() else {
-                            // This will error in HIR lowering.
-                            self.tcx
-                                .dcx()
-                                .span_delayed_bug(path.span, "no resolution for RTN path");
-                            return;
-                        };
-
-                        // Don't bail if we have identical bounds, which may be collected from
-                        // something like `T: Bound + Bound`, or via elaborating supertraits.
-                        for (second_vars, second_assoc_item) in bounds {
-                            if second_vars != bound_vars || second_assoc_item != assoc_item {
-                                // This will error in HIR lowering.
-                                self.tcx.dcx().span_delayed_bug(
-                                    path.span,
-                                    "ambiguous resolution for RTN path",
-                                );
-                                return;
-                            }
-                        }
-
-                        (bound_vars, assoc_item.def_id, item_segment)
-                    }
-                    // If we have a self type alias (in an impl), try to resolve an
-                    // associated item from one of the supertraits of the impl's trait.
-                    Res::SelfTyAlias { alias_to: impl_def_id, is_trait_impl: true, .. } => {
-                        let hir::ItemKind::Impl(hir::Impl { of_trait: Some(trait_ref), .. }) = self
-                            .tcx
-                            .hir_node_by_def_id(impl_def_id.expect_local())
-                            .expect_item()
-                            .kind
-                        else {
-                            return;
-                        };
-                        let Some(trait_def_id) = trait_ref.trait_def_id() else {
-                            return;
-                        };
-                        let Some((bound_vars, assoc_item)) = BoundVarContext::supertrait_hrtb_vars(
-                            self.tcx,
-                            trait_def_id,
-                            item_segment.ident,
-                            ty::AssocTag::Fn,
-                        ) else {
-                            return;
-                        };
-                        (bound_vars, assoc_item.def_id, item_segment)
-                    }
-                    _ => return,
-                }
+                (bound_vars, assoc_item.def_id, item_segment)
             }
 
             _ => return,
@@ -2245,6 +2195,83 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         let existing_bound_vars_saved = existing_bound_vars.clone();
         existing_bound_vars.extend(bound_vars);
         self.record_late_bound_vars(item_segment.hir_id, existing_bound_vars_saved);
+    }
+
+    /// In a limited fashion, try to resolve the given type-relative path of the given kind.
+    fn limited_resolve_type_relative_path(
+        &self,
+        tag: ty::AssocTag,
+        qself: &'tcx hir::Ty<'tcx>,
+        segment: &'tcx hir::PathSegment<'tcx>,
+        speculative: bool,
+    ) -> Option<(Vec<ty::BoundVariableKind>, &'tcx ty::AssocItem)> {
+        // This mimics HIR ty lowering's `lower_assoc_path_shared`.
+        // FIXME: Duplicating efforts is not robust or sustainable/maintainable.
+        // Ideally, we'd simply obtain the resulting type-dependent defs from
+        // HIR ty lowering (not only in FnCtxts but also in ItemCtxts!).
+
+        // First, ignore a qself that isn't a type or `Self` param. Those are the only ones
+        // that support `T::Assoc` anyways in HIR ty lowering at the time of writing.
+        let hir::TyKind::Path(hir::QPath::Resolved(None, path)) = qself.kind else {
+            return None;
+        };
+
+        match path.res {
+            Res::Def(DefKind::TyParam, _) | Res::SelfTyParam { trait_: _ } => {
+                let mut bounds =
+                    self.for_each_trait_bound_on_res(path.res).filter_map(|trait_def_id| {
+                        BoundVarContext::supertrait_hrtb_vars(
+                            self.tcx,
+                            trait_def_id,
+                            segment.ident,
+                            tag,
+                        )
+                    });
+
+                let Some((bound_vars, assoc_item)) = bounds.next() else {
+                    if !speculative {
+                        // This will error in HIR ty lowering.
+                        self.tcx
+                            .dcx()
+                            .span_delayed_bug(path.span, "no resolution for type-relative path");
+                    }
+                    return None;
+                };
+
+                // Don't bail if we have identical bounds, which may be collected from
+                // something like `T: Bound + Bound`, or via elaborating supertraits.
+                for (second_vars, second_assoc_item) in bounds {
+                    if second_vars != bound_vars || second_assoc_item != assoc_item {
+                        if !speculative {
+                            // This will error in HIR ty lowering.
+                            self.tcx.dcx().span_delayed_bug(
+                                path.span,
+                                "ambiguous resolution for type-relative path",
+                            );
+                        }
+                        return None;
+                    }
+                }
+
+                Some((bound_vars, assoc_item))
+            }
+            // If we have a self type alias (in an impl), try to resolve an
+            // associated item from one of the supertraits of the impl's trait.
+            Res::SelfTyAlias { alias_to: impl_def_id, is_trait_impl: true, .. } => {
+                let hir::ItemKind::Impl(hir::Impl { of_trait: Some(trait_ref), .. }) =
+                    self.tcx.hir_node_by_def_id(impl_def_id.expect_local()).expect_item().kind
+                else {
+                    return None;
+                };
+                BoundVarContext::supertrait_hrtb_vars(
+                    self.tcx,
+                    trait_ref.trait_def_id()?,
+                    segment.ident,
+                    tag,
+                )
+            }
+            _ => None,
+        }
     }
 
     /// Walk the generics of the item for a trait bound whose self type
