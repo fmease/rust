@@ -1,5 +1,4 @@
-// FIXME(fmease): I've regressed this one since we now reject TypeRelative paths as too complex.
-//@ known-bug: unknown
+//@ check-pass
 
 trait CallWithShim: Sized {
     type Shim<'s>
