@@ -1335,14 +1335,10 @@ fn render_attributes_in_code(
     }
 }
 
+// XXX docs
 /// used for type aliases to only render their `repr` attribute.
-fn render_repr_attributes_in_code(
-    w: &mut impl fmt::Write,
-    cx: &Context<'_>,
-    def_id: DefId,
-    item_type: ItemType,
-) {
-    if let Some(repr) = clean::repr_attributes(cx.tcx(), cx.cache(), def_id, item_type) {
+fn render_repr_attribute_in_code(w: &mut impl fmt::Write, cx: &Context<'_>, def_id: DefId) {
+    if let Some(repr) = clean::repr_attribute(cx.tcx(), cx.cache(), def_id) {
         render_code_attribute("", CodeAttribute(repr), w);
     }
 }
