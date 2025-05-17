@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::hash::Hash;
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock as OnceCell};
@@ -772,11 +773,10 @@ impl Item {
         Some(tcx.visibility(def_id))
     }
 
-    /// Get a list of attributes excluding `#[repr]` to display.
-    ///
-    /// Only used by the HTML output-format.
-    fn attributes_without_repr(&self) -> Vec<String> {
-        self.attrs
+    // FIXME(fmease): Move into html/ mod, this is for HTML output only.
+    pub(crate) fn attributes(&self, tcx: TyCtxt<'_>, cache: &Cache) -> Vec<String> {
+        let mut attrs: Vec<_> = self
+            .attrs
             .other_attrs
             .iter()
             .filter_map(|attr| match attr {
@@ -794,26 +794,15 @@ impl Item {
                 }
                 _ => None,
             })
-            .collect()
-    }
+            .collect();
 
-    /// Get a list of attributes to display on this item.
-    ///
-    /// Only used by the HTML output-format.
-    pub(crate) fn attributes(&self, tcx: TyCtxt<'_>, cache: &Cache) -> Vec<String> {
-        let mut attrs = self.attributes_without_repr();
-
-        if let Some(repr_attr) = self.repr(tcx, cache) {
-            attrs.push(repr_attr);
+        if let Some(def_id) = self.def_id()
+            && let Some(attr) = repr_attribute(tcx, cache, def_id)
+        {
+            attrs.push(attr);
         }
-        attrs
-    }
 
-    /// Returns a stringified `#[repr(...)]` attribute.
-    ///
-    /// Only used by the HTML output-format.
-    pub(crate) fn repr(&self, tcx: TyCtxt<'_>, cache: &Cache) -> Option<String> {
-        repr_attributes(tcx, cache, self.def_id()?, self.type_())
+        attrs
     }
 
     pub fn is_doc_hidden(&self) -> bool {
@@ -825,72 +814,107 @@ impl Item {
     }
 }
 
-/// Return a string representing the `#[repr]` attribute if present.
+/// Compute the *public* `#[repr]` of the item given by `DefId`.
 ///
-/// Only used by the HTML output-format.
-pub(crate) fn repr_attributes(
-    tcx: TyCtxt<'_>,
+/// Read more about it here:
+/// <https://doc.rust-lang.org/nightly/rustdoc/advanced-features.html#repr-documenting-the-representation-of-a-type>.
+///
+/// For use in the HTML output only.
+// FIXME(fmease): Move into html/ mod
+pub(crate) fn repr_attribute<'tcx>(
+    tcx: TyCtxt<'tcx>,
     cache: &Cache,
     def_id: DefId,
-    item_type: ItemType,
 ) -> Option<String> {
-    use rustc_abi::IntegerType;
-
-    if !matches!(item_type, ItemType::Struct | ItemType::Enum | ItemType::Union) {
-        return None;
-    }
-    let adt = tcx.adt_def(def_id);
+    let adt = match tcx.def_kind(def_id) {
+        DefKind::Struct | DefKind::Enum | DefKind::Union => tcx.adt_def(def_id),
+        _ => return None,
+    };
     let repr = adt.repr();
-    let mut out = Vec::new();
-    if repr.c() {
-        out.push("C");
-    }
-    if repr.transparent() {
-        // Render `repr(transparent)` iff the non-1-ZST field is public or at least one
-        // field is public in case all fields are 1-ZST fields.
-        let render_transparent = cache.document_private
-            || adt
-                .all_fields()
-                .find(|field| {
-                    let ty = field.ty(tcx, ty::GenericArgs::identity_for_item(tcx, field.did));
-                    tcx.layout_of(ty::TypingEnv::post_analysis(tcx, field.did).as_query_input(ty))
-                        .is_ok_and(|layout| !layout.is_1zst())
-                })
-                .map_or_else(
-                    || adt.all_fields().any(|field| field.vis.is_public()),
-                    |field| field.vis.is_public(),
-                );
 
-        if render_transparent {
-            out.push("transparent");
-        }
-    }
-    if repr.simd() {
-        out.push("simd");
-    }
-    let pack_s;
-    if let Some(pack) = repr.pack {
-        pack_s = format!("packed({})", pack.bytes());
-        out.push(&pack_s);
-    }
-    let align_s;
-    if let Some(align) = repr.align {
-        align_s = format!("align({})", align.bytes());
-        out.push(&align_s);
-    }
-    let int_s;
-    if let Some(int) = repr.int {
-        int_s = match int {
-            IntegerType::Pointer(is_signed) => {
-                format!("{}size", if is_signed { 'i' } else { 'u' })
+    let is_visible = |def_id| cache.document_hidden || !tcx.is_doc_hidden(def_id);
+    let is_public_field = |field: &ty::FieldDef| {
+        (cache.document_private || field.vis.is_public()) && is_visible(field.did)
+    };
+
+    if repr.transparent() {
+        // The transparent repr is public iff the non-1-ZST field is public and visible or
+        // – in case all fields are 1-ZST fields — at least one field is public and visible.
+        let is_public = 'is_public: {
+            // `#[repr(transparent)]` can only be applied to structs and single-variant enums.
+            let var = adt.variant(rustc_abi::FIRST_VARIANT); // the first and only variant
+
+            if !is_visible(var.def_id) {
+                break 'is_public false;
             }
-            IntegerType::Fixed(size, is_signed) => {
-                format!("{}{}", if is_signed { 'i' } else { 'u' }, size.size().bytes() * 8)
+
+            // Side note: There can only ever be one or zero non-1-ZST fields.
+            let non_1zst_field = var.fields.iter().find(|field| {
+                let ty = ty::TypingEnv::post_analysis(tcx, field.did)
+                    .as_query_input(tcx.type_of(field.did).instantiate_identity());
+                tcx.layout_of(ty).is_ok_and(|layout| !layout.is_1zst())
+            });
+
+            match non_1zst_field {
+                Some(field) => is_public_field(field),
+                None => var.fields.is_empty() || var.fields.iter().any(is_public_field),
             }
         };
-        out.push(&int_s);
+
+        // Since the transparent repr can't have any other reprs or
+        // repr modifiers beside it, we can safely return early here.
+        return is_public.then(|| "#[repr(transparent)]".into());
     }
-    if !out.is_empty() { Some(format!("#[repr({})]", out.join(", "))) } else { None }
+
+    // Fast path which avoids looking through the variants and fields in
+    // the common case of no `#[repr]` or in the case of `#[repr(Rust)]`.
+    // FIXME: This check is not very robust / forward compatible!
+    if !repr.c()
+        && !repr.simd()
+        && repr.int.is_none()
+        && repr.pack.is_none()
+        && repr.align.is_none()
+    {
+        return None;
+    }
+
+    // The repr is public iff all components are public and visible.
+    let is_public = adt
+        .variants()
+        .iter()
+        .all(|variant| is_visible(variant.def_id) && variant.fields.iter().all(is_public_field));
+    if !is_public {
+        return None;
+    }
+
+    let mut result = Vec::<Cow<'_, _>>::new();
+
+    if repr.c() {
+        result.push("C".into());
+    }
+    if repr.simd() {
+        result.push("simd".into());
+    }
+    if let Some(int) = repr.int {
+        let prefix = if int.is_signed() { 'i' } else { 'u' };
+        let int = match int {
+            rustc_abi::IntegerType::Pointer(_) => format!("{prefix}size"),
+            rustc_abi::IntegerType::Fixed(int, _) => {
+                format!("{prefix}{}", int.size().bytes() * 8)
+            }
+        };
+        result.push(int.into());
+    }
+
+    // Render modifiers last.
+    if let Some(pack) = repr.pack {
+        result.push(format!("packed({})", pack.bytes()).into());
+    }
+    if let Some(align) = repr.align {
+        result.push(format!("align({})", align.bytes()).into());
+    }
+
+    (!result.is_empty()).then(|| format!("#[repr({})]", result.join(", ")))
 }
 
 #[derive(Clone, Debug)]
