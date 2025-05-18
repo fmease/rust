@@ -781,6 +781,12 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                         // rules. So e.g., `Box<dyn Debug>` becomes
                         // `Box<dyn Debug + 'static>`.
                         self.resolve_object_lifetime_default(&*lifetime);
+                        if std::env::var_os("SHOW_OLD").is_some() {
+                            self.tcx.dcx().struct_span_warn(
+                                ty.span,
+                                format!("OLD={:?}", self.rbv.defs.get(&lifetime.hir_id.local_id)))
+                            .emit();
+                        }
                     }
                     LifetimeKind::Infer => {
                         // If the user writes `'_`, we use the *ordinary* elision
@@ -924,7 +930,20 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
                             segment,
                             true,
                         )
-                        .map(|(_, assoc_item)| (assoc_item.def_id, std::slice::from_ref(segment)));
+                        .map(|(_, trait_ref, item_def_id)| {
+                            (
+                                item_def_id,
+                                &*self.tcx.arena.alloc_from_iter(
+                                    trait_ref
+                                        .unwrap()
+                                        .path
+                                        .segments
+                                        .iter()
+                                        .copied()
+                                        .chain(Some(*segment)),
+                                ),
+                            )
+                        });
                     self.visit_segment_args(container, args);
                 }
 
@@ -990,6 +1009,8 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
         _: Span,
         def_id: LocalDefId,
     ) {
+        // TODO: Explain why we need to walk first.
+        intravisit::walk_fn_kind(self, fk);
         let output = match fd.output {
             hir::FnRetTy::DefaultReturn(_) => None,
             hir::FnRetTy::Return(ty) => Some(ty),
@@ -1003,7 +1024,6 @@ impl<'a, 'tcx> Visitor<'tcx> for BoundVarContext<'a, 'tcx> {
             self.rbv.late_bound_vars.insert(hir_id.local_id, bound_vars);
         }
         self.visit_fn_like_elision(fd.inputs, output, matches!(fk, intravisit::FnKind::Closure));
-        intravisit::walk_fn_kind(self, fk);
         self.visit_nested_body(body_id)
     }
 
@@ -1875,6 +1895,23 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         def_id: DefId,
         segments: &[hir::PathSegment<'_>],
     ) -> Vec<Option<ResolvedArg>> {
+        eprintln!("::: caold|  segments={}", segments.iter().map(|seg| {
+            let mut r = seg.ident.to_string();
+            if let Some(args) = seg.args {
+                r += "<";
+                for arg in args.args {
+                    r += match arg {
+                        hir::GenericArg::Lifetime(_) => "Lt",
+                        hir::GenericArg::Type(_) => "Ty",
+                        hir::GenericArg::Const(_) => "Ct",
+                        hir::GenericArg::Infer(_) => "In",
+                    };
+                }
+                r += ">";
+            }
+            std::borrow::Cow::from(r)
+        }).intersperse(std::borrow::Cow::from("::")).collect::<String>());
+
         let in_body = {
             let mut scope = self.scope;
             loop {
@@ -1897,7 +1934,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
 
         let generics = self.tcx.generics_of(def_id);
 
-        let set_to_region = |set: ObjectLifetimeDefault| match set {
+        let set_to_region = |set: ObjectLifetimeDefault| match dbg!(set) {
             ObjectLifetimeDefault::Empty => {
                 if in_body {
                     None
@@ -1925,11 +1962,12 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                 }
 
                 let (depth, index) = param_to_depth_and_index(generics, self.tcx, param_def_id);
-                segments[segments.len() - depth - 1]
-                    .args
-                    .and_then(|args| args.args.get(index))
+                dbg!(depth, index);
+                dbg!(segments[segments.len() - depth - 1]
+                    .args)
+                    .and_then(|args| dbg!(args.args.get(index)))
                     .and_then(|arg| match arg {
-                        GenericArg::Lifetime(lt) => self.rbv.defs.get(&lt.hir_id.local_id).copied(),
+                        GenericArg::Lifetime(lt) => dbg!(self.rbv.defs.get(&lt.hir_id.local_id).copied()),
                         _ => None,
                     })
             }
@@ -2153,7 +2191,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                     matches!(args.parenthesized, hir::GenericArgsParentheses::ReturnTypeNotation)
                 }) =>
             {
-                let Some((bound_vars, assoc_item)) = self.limited_resolve_type_relative_path(
+                let Some((bound_vars, _, item_def_id)) = self.limited_resolve_type_relative_path(
                     ty::AssocTag::Fn,
                     qself,
                     item_segment,
@@ -2161,7 +2199,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                 ) else {
                     return;
                 };
-                (bound_vars, assoc_item.def_id, item_segment)
+                (bound_vars, item_def_id, item_segment)
             }
 
             _ => return,
@@ -2207,7 +2245,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
         qself: &'tcx hir::Ty<'tcx>,
         segment: &'tcx hir::PathSegment<'tcx>,
         speculative: bool,
-    ) -> Option<(Vec<ty::BoundVariableKind>, &'tcx ty::AssocItem)> {
+    ) -> Option<(Vec<ty::BoundVariableKind>, Option<&'tcx hir::TraitRef<'tcx>>, DefId)> {
         // This mimics HIR ty lowering's `lower_assoc_path_shared`.
         // FIXME: Duplicating efforts is not robust or sustainable/maintainable.
         // Ideally, we'd simply obtain the resulting type-dependent defs from
@@ -2221,17 +2259,19 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
 
         match path.res {
             Res::Def(DefKind::TyParam, _) | Res::SelfTyParam { trait_: _ } => {
-                let mut bounds =
-                    self.for_each_trait_bound_on_res(path.res).filter_map(|trait_def_id| {
+                let mut bounds = self.for_each_trait_bound_on_res(path.res).filter_map(
+                    |(trait_def_id, trait_ref)| {
                         BoundVarContext::supertrait_hrtb_vars(
                             self.tcx,
                             trait_def_id,
                             segment.ident,
                             tag,
                         )
-                    });
+                        .map(|(bound_vars, assoc_item)| (bound_vars, trait_ref, assoc_item))
+                    },
+                );
 
-                let Some((bound_vars, assoc_item)) = bounds.next() else {
+                let Some((bound_vars, trait_ref, assoc_item)) = bounds.next() else {
                     if !speculative {
                         // This will error in HIR ty lowering.
                         self.tcx
@@ -2243,7 +2283,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
 
                 // Don't bail if we have identical bounds, which may be collected from
                 // something like `T: Bound + Bound`, or via elaborating supertraits.
-                for (second_vars, second_assoc_item) in bounds {
+                for (second_vars, _, second_assoc_item) in bounds {
                     if second_vars != bound_vars || second_assoc_item != assoc_item {
                         if !speculative {
                             // This will error in HIR ty lowering.
@@ -2256,7 +2296,7 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                     }
                 }
 
-                Some((bound_vars, assoc_item))
+                Some((bound_vars, trait_ref, assoc_item.def_id))
             }
             // If we have a self type alias (in an impl), try to resolve an
             // associated item from one of the supertraits of the impl's trait.
@@ -2266,12 +2306,14 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                 else {
                     return None;
                 };
+                eprintln!("::: SelfTyAlias; trait_ref={trait_ref:?}");
                 BoundVarContext::supertrait_hrtb_vars(
                     self.tcx,
                     trait_ref.trait_def_id()?,
                     segment.ident,
                     tag,
                 )
+                .map(|(bound_vars, assoc_item)| (bound_vars, Some(trait_ref), assoc_item.def_id))
             }
             _ => None,
         }
@@ -2279,7 +2321,10 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
 
     /// Walk the generics of the item for a trait bound whose self type
     /// corresponds to the expected res, and return the trait def id.
-    fn for_each_trait_bound_on_res(&self, expected_res: Res) -> impl Iterator<Item = DefId> {
+    fn for_each_trait_bound_on_res(
+        &self,
+        expected_res: Res,
+    ) -> impl Iterator<Item = (DefId, Option<&'tcx hir::TraitRef<'tcx>>)> {
         std::iter::from_coroutine(
             #[coroutine]
             move || {
@@ -2310,7 +2355,8 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                         {
                             // Yield the trait's def id. Supertraits will be
                             // elaborated from that.
-                            yield item.owner_id.def_id.to_def_id();
+                            eprintln!("::: SelfTyParam; trait=..."); // we'll look into ItemKind::Trait
+                            yield (item.owner_id.def_id.to_def_id(), None);
                         } else if let Some(generics) = node.generics() {
                             for pred in generics.predicates {
                                 let hir::WherePredicateKind::BoundPredicate(pred) = pred.kind
@@ -2332,7 +2378,10 @@ impl<'a, 'tcx> BoundVarContext<'a, 'tcx> {
                                             if let Some(def_id) =
                                                 poly_trait_ref.trait_ref.trait_def_id()
                                             {
-                                                yield def_id;
+                                                eprintln!(
+                                                    "::: TyParam; poly_trait_ref={poly_trait_ref:?}"
+                                                );
+                                                yield (def_id, Some(&poly_trait_ref.trait_ref));
                                             }
                                         }
                                         hir::GenericBound::Outlives(_)

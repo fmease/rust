@@ -316,6 +316,7 @@ where
                 args.as_coroutine().resume_ty().visit_with(self);
             }
 
+            // FIXME(fmease): expand_free_alias_tys
             ty::Alias(kind, ty::AliasTy { def_id, args, .. })
                 if let Some(variances) = self.tcx.opt_alias_variances(kind, def_id) =>
             {
