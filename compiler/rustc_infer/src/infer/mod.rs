@@ -1091,6 +1091,25 @@ impl<'tcx> InferCtxt<'tcx> {
         }
     }
 
+    // FIXME(fmease): Remove again!
+    pub fn probe_ty_vars(&self) -> Vec<(ty::TyVid, Result<Ty<'tcx>, ty::UniverseIndex>)> {
+        use self::type_variable::TypeVariableValue;
+
+        let mut inner = self.inner.borrow_mut();
+        let mut ty_var_table = inner.type_variables();
+
+        (0..ty_var_table.num_vars())
+            .map(|i| {
+                let vid = ty::TyVid::from_usize(i);
+                let r = match ty_var_table.probe(vid) {
+                    TypeVariableValue::Known { value } => Ok(value),
+                    TypeVariableValue::Unknown { universe } => Err(universe),
+                };
+                (vid, r)
+            })
+            .collect()
+    }
+
     pub fn shallow_resolve(&self, ty: Ty<'tcx>) -> Ty<'tcx> {
         if let ty::Infer(v) = *ty.kind() {
             match v {

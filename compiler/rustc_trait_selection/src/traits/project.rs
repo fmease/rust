@@ -147,7 +147,8 @@ impl<'tcx> ProjectionCandidateSet<'tcx> {
 ///     MismatchedProjectionTypes<'tcx>,
 /// >
 /// ```
-pub(super) enum ProjectAndUnifyResult<'tcx> {
+// pub(super) enum ProjectAndUnifyResult<'tcx> {
+pub /*FIXME*/ enum ProjectAndUnifyResult<'tcx> {
     /// The projection bound holds subject to the given obligations. If the
     /// projection cannot be normalized because the required trait bound does
     /// not hold, this is returned, with `obligations` being a predicate that
@@ -172,7 +173,8 @@ pub(super) enum ProjectAndUnifyResult<'tcx> {
 /// the projection cache key used to track these additional obligations.
 // FIXME(mgca): While this supports constants, it is only used for types by default right now
 #[instrument(level = "debug", skip(selcx))]
-pub(super) fn poly_project_and_unify_term<'cx, 'tcx>(
+// pub(super) fn poly_project_and_unify_term<'cx, 'tcx>(
+pub fn poly_project_and_unify_term<'cx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'tcx>,
     obligation: &PolyProjectionObligation<'tcx>,
 ) -> ProjectAndUnifyResult<'tcx> {
