@@ -8,6 +8,7 @@ use rustc_infer::infer::TyCtxtInferExt;
 use rustc_infer::infer::outlives::env::OutlivesEnvironment;
 use rustc_infer::infer::region_constraints::{ConstraintKind, RegionConstraintData};
 use rustc_infer::traits::solve::CandidateSource;
+use rustc_middle::bug;
 use rustc_middle::traits::solve::Goal;
 use rustc_middle::ty::{
     self, Region, Ty, TyCtxt, TypeFoldable, TypeFolder, TypeSuperFoldable, TypeVisitableExt,
@@ -25,6 +26,11 @@ use crate::clean::{
     clean_trait_ref_with_constraints, clean_ty_generics_inner, simplify,
 };
 use crate::core::DocContext;
+
+// FIXME: Temporary.
+mod legacy;
+// FIXME: Temporary.
+mod tree;
 
 #[instrument(level = "debug", skip(cx))]
 pub(crate) fn synthesize_auto_trait_impls<'tcx>(
@@ -84,7 +90,41 @@ fn synthesize_auto_trait_impl<'tcx>(
 
     let trait_ref = ty::TraitRef::new(tcx, trait_def_id, [ty]);
 
-    let result = find_auto_trait_generics(tcx, ty, trait_def_id, typing_env);
+    // FIXME: temp
+    let log = std::env::var_os("DUMP_FOR").is_some_and(|var| {
+        let var = var.into_string().expect("env var `DUMP_FOR` isn't valid UTF-8");
+        let (trait_, item) =
+            var.split_once(",").expect("env var `DUMP_FOR` doesn't contain a comma");
+        format!("{trait_def_id:?}").contains(&trait_) && format!("{item_def_id:?}").contains(&item)
+    });
+    let _log = Log { basic: log, extra: log && std::env::var_os("EXTRA").is_some() };
+
+    // if _log.basic {
+    //     eprintln!("::: sati|  trait_ref:  {trait_ref}");
+    //     eprintln!("::: sati|       item:  {item_def_id:?}");
+    // }
+
+    let mut result_next = None;
+    let mut result_lgcy = None;
+
+    if std::env::var_os("NEXT").is_some() {
+        let result = find_auto_trait_generics(tcx, ty, trait_def_id, typing_env, _log);
+        if _log.basic {
+            eprintln!("::: sati|    -next->:  {result:#?}");
+        }
+        result_next = result;
+    }
+
+    if std::env::var_os("LGCY").is_some() {
+        let result = legacy::find_auto_trait_generics(tcx, ty, trait_def_id, typing_env, _log);
+        if _log.basic {
+            eprintln!("::: sati|    -lgcy->:  {result:#?}");
+        }
+        result_lgcy = Some(result);
+    };
+
+    // FIXME: Temporary
+    let result = result_next.or(result_lgcy)?;
 
     let (generics, polarity) = match result {
         ImplKind::Positive(info) => {
@@ -451,13 +491,17 @@ fn early_bound_region_name(region: Region<'_>) -> Option<Symbol> {
     }
 }
 
-// FIXME(fmease): Rename.
+//////////////////////////////
+
+// FIXME: Temporary
+// FIXME: tmp ret ty of Option (None means: we don't know yet)
 fn find_auto_trait_generics<'tcx>(
     tcx: TyCtxt<'tcx>,
     self_ty: Ty<'tcx>,
     trait_def_id: DefId,
     typing_env: ty::TypingEnv<'tcx>,
-) -> ImplKind<'tcx> {
+    _log: Log,
+) -> Option<ImplKind<'tcx>> {
     let trait_ref = ty::TraitRef::new(tcx, trait_def_id, [self_ty]);
 
     let (infcx, param_env) =
@@ -470,15 +514,24 @@ fn find_auto_trait_generics<'tcx>(
         // FIXME(fmease): This should most likely happen in a probe.
         match infcx.visit_proof_tree(goal, &mut HasUserWrittenImpl) {
             ControlFlow::Continue(()) => {}
-            ControlFlow::Break(()) => return ImplKind::Explicit,
+            ControlFlow::Break(()) => return Some(ImplKind::Explicit),
         }
+    }
+
+    if _log.basic {
+        eprintln!("[[next]] no explicit impl found");
     }
 
     let goal = Goal::new(tcx, param_env, trait_ref);
 
+    if _log.basic && std::env::var_os("TREE").is_some() {
+        infcx.visit_proof_tree(goal, &mut tree::DumpTree::new());
+    }
+
     let mut collector = PredicateCollector {
         clauses: typing_env.param_env.caller_bounds().to_vec(),
         const_var_tys: UnordMap::default(),
+        log: _log.basic,
     };
 
     match infcx.visit_proof_tree(goal, &mut collector) {
@@ -487,32 +540,33 @@ fn find_auto_trait_generics<'tcx>(
 
             // FIXME(fmease): Decide if we want to keep this.
             // if cfg!(debug_assertions) {
-            //     use rustc_trait_selection::traits::{ObligationCause, ObligationCtxt};
-            //     let ocx = ObligationCtxt::new(&infcx);
-            //     ocx.register_bound(ObligationCause::dummy(), param_env, self_ty, trait_def_id);
-            //     let errors = ocx.evaluate_obligations_error_on_ambiguity();
-            //     if !errors.is_empty() {
-            //         rustc_middle::bug!(
-            //             "synthesized ill-formed auto trait impl of {trait_def_id:?} for `{self_ty}`: {errors:?}"
-            //         );
-            //     }
-            // }
+            if std::env::var_os("VERIFY").is_some() {
+                use rustc_trait_selection::traits::{ObligationCause, ObligationCtxt};
+                let ocx = ObligationCtxt::new(&infcx);
+                ocx.register_bound(ObligationCause::dummy(), param_env, self_ty, trait_def_id);
+                let errors = ocx.evaluate_obligations_error_on_ambiguity();
+                if !errors.is_empty() {
+                    rustc_middle::bug!(
+                        "synthesized ill-formed auto trait impl of {trait_def_id:?} for `{self_ty}`: {errors:?}"
+                    );
+                }
+            }
 
             let outlives_env =
                 OutlivesEnvironment::new(&infcx, hir::def_id::CRATE_DEF_ID, param_env, []);
             let _ = infcx.process_registered_region_obligations(&outlives_env, |ty, _| Ok(ty));
             let region_data = infcx.inner.borrow_mut().unwrap_region_constraints().data().clone();
-            let vid_to_region = map_vid_to_region(&region_data);
+            let vid_to_region = legacy::map_vid_to_region(&region_data);
 
-            ImplKind::Positive(ImplInfo {
+            Some(ImplKind::Positive(ImplInfo {
                 param_env,
                 const_var_tys: collector.const_var_tys,
                 region_data,
                 vid_to_region,
-            })
+            }))
         }
         // FIXME(#146571): Negative impl for !=Sized isn't correct technically speaking.
-        ControlFlow::Break(()) => ImplKind::Negative,
+        ControlFlow::Break(()) => Some(ImplKind::Negative),
     }
 }
 
@@ -541,6 +595,8 @@ impl<'tcx> ProofTreeVisitor<'tcx> for HasUserWrittenImpl {
 struct PredicateCollector<'tcx> {
     clauses: Vec<ty::Clause<'tcx>>,
     const_var_tys: UnordMap<ty::ConstVid, ty::Binder<'tcx, Ty<'tcx>>>,
+    #[allow(dead_code)] // FIXME
+    log: bool,
 }
 
 impl<'tcx> PredicateCollector<'tcx> {
@@ -550,7 +606,6 @@ impl<'tcx> PredicateCollector<'tcx> {
         {
             self.clauses.push(clause);
         } else {
-            // FIXME(fmease): Temporary
             panic!("can't handle PredicateKind {:?}", goal.predicate)
         }
     }
@@ -595,7 +650,8 @@ impl<'tcx> ProofTreeVisitor<'tcx> for PredicateCollector<'tcx> {
         let candidates = goal.candidates();
         let candidate = match candidates.as_slice() {
             [] => {
-                // FIXME(fmease): What about outlives-predicates? Shouldn't they not matter here?
+                // FIXME: legacy SATI also handles outlives.predicates.
+                //        Do we really need to handle them, too?
                 if let Some(clause) = predicate.as_clause()
                     && let ty::ClauseKind::Trait(pred) = clause.kind().skip_binder()
                     && let ty::Param(_) = pred.self_ty().kind()
@@ -646,98 +702,10 @@ impl<'tcx> ProofTreeVisitor<'tcx> for PredicateCollector<'tcx> {
     }
 }
 
-/// This is very similar to `handle_lifetimes`. However, instead of matching `ty::Region`s
-/// to each other, we match `ty::RegionVid`s to `ty::Region`s.
-fn map_vid_to_region<'cx>(
-    regions: &RegionConstraintData<'cx>,
-) -> FxIndexMap<ty::RegionVid, ty::Region<'cx>> {
-    let mut vid_map = FxIndexMap::<RegionTarget<'cx>, RegionDeps<'cx>>::default();
-    let mut finished_map = FxIndexMap::default();
-
-    for (c, _) in &regions.constraints {
-        match c.kind {
-            ConstraintKind::VarSubVar => {
-                let sub_vid = c.sub.as_var();
-                let sup_vid = c.sup.as_var();
-                {
-                    let deps1 = vid_map.entry(RegionTarget::RegionVid(sub_vid)).or_default();
-                    deps1.larger.insert(RegionTarget::RegionVid(sup_vid));
-                }
-
-                let deps2 = vid_map.entry(RegionTarget::RegionVid(sup_vid)).or_default();
-                deps2.smaller.insert(RegionTarget::RegionVid(sub_vid));
-            }
-            ConstraintKind::RegSubVar => {
-                let sup_vid = c.sup.as_var();
-                {
-                    let deps1 = vid_map.entry(RegionTarget::Region(c.sub)).or_default();
-                    deps1.larger.insert(RegionTarget::RegionVid(sup_vid));
-                }
-
-                let deps2 = vid_map.entry(RegionTarget::RegionVid(sup_vid)).or_default();
-                deps2.smaller.insert(RegionTarget::Region(c.sub));
-            }
-            ConstraintKind::VarSubReg => {
-                let sub_vid = c.sub.as_var();
-                finished_map.insert(sub_vid, c.sup);
-            }
-            ConstraintKind::RegSubReg => {
-                {
-                    let deps1 = vid_map.entry(RegionTarget::Region(c.sub)).or_default();
-                    deps1.larger.insert(RegionTarget::Region(c.sup));
-                }
-
-                let deps2 = vid_map.entry(RegionTarget::Region(c.sup)).or_default();
-                deps2.smaller.insert(RegionTarget::Region(c.sub));
-            }
-        }
-    }
-
-    while !vid_map.is_empty() {
-        let target = *vid_map.keys().next().unwrap();
-        let deps = vid_map.swap_remove(&target).unwrap();
-
-        for smaller in deps.smaller.iter() {
-            for larger in deps.larger.iter() {
-                match (smaller, larger) {
-                    (&RegionTarget::Region(_), &RegionTarget::Region(_)) => {
-                        if let IndexEntry::Occupied(v) = vid_map.entry(*smaller) {
-                            let smaller_deps = v.into_mut();
-                            smaller_deps.larger.insert(*larger);
-                            smaller_deps.larger.swap_remove(&target);
-                        }
-
-                        if let IndexEntry::Occupied(v) = vid_map.entry(*larger) {
-                            let larger_deps = v.into_mut();
-                            larger_deps.smaller.insert(*smaller);
-                            larger_deps.smaller.swap_remove(&target);
-                        }
-                    }
-                    (&RegionTarget::RegionVid(v1), &RegionTarget::Region(r1)) => {
-                        finished_map.insert(v1, r1);
-                    }
-                    (&RegionTarget::Region(_), &RegionTarget::RegionVid(_)) => {
-                        // Do nothing; we don't care about regions that are smaller than vids.
-                    }
-                    (&RegionTarget::RegionVid(_), &RegionTarget::RegionVid(_)) => {
-                        if let IndexEntry::Occupied(v) = vid_map.entry(*smaller) {
-                            let smaller_deps = v.into_mut();
-                            smaller_deps.larger.insert(*larger);
-                            smaller_deps.larger.swap_remove(&target);
-                        }
-
-                        if let IndexEntry::Occupied(v) = vid_map.entry(*larger) {
-                            let larger_deps = v.into_mut();
-                            larger_deps.smaller.insert(*smaller);
-                            larger_deps.smaller.swap_remove(&target);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    finished_map
+#[derive(Clone, Copy)]
+struct Log {
+    basic: bool,
+    extra: bool,
 }
 
 #[derive(Debug)]
