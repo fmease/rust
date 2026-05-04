@@ -11,7 +11,7 @@ impl T for S {
 
 #[cfg(false)]
 trait T {
-    fn f(#[attr]); //~ ERROR expected argument name, found `)`
+    fn f(#[attr]); //~ ERROR expected type or parameter name, found `)`
 }
 
 fn main() {}
