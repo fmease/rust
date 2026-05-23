@@ -154,7 +154,11 @@ impl<'a> Parser<'a> {
             attrs.clone(), // FIXME: unwanted clone of attrs
             false,
             true,
-            FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true },
+            FnParseMode {
+                req_name: super::item::ParamNameRequired::Yes,
+                context: FnContext::Free,
+                req_body: true,
+            },
             force_collect,
             AllowConstBlockItems::No,
         )? {

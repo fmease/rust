@@ -13,6 +13,7 @@ use super::{
     Trailing, UsePreAttrPos,
 };
 use crate::parser::FnContext;
+use crate::parser::item::ParamNameRequired;
 use crate::{errors, exp};
 
 // Public for rustfmt usage
@@ -203,7 +204,11 @@ impl<'a> Parser<'a> {
             AttrWrapper::empty(),
             true,
             false,
-            FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true },
+            FnParseMode {
+                req_name: ParamNameRequired::Yes,
+                context: FnContext::Free,
+                req_body: true,
+            },
             ForceCollect::No,
             AllowConstBlockItems::Yes,
         ) {

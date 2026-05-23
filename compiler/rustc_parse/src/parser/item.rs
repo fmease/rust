@@ -12,7 +12,6 @@ use rustc_errors::codes::*;
 use rustc_errors::{Applicability, PResult, StashKey, msg, struct_span_code_err};
 use rustc_session::lint::builtin::VARARGS_WITHOUT_PATTERN;
 use rustc_span::edit_distance::edit_distance;
-use rustc_span::edition::Edition;
 use rustc_span::{DUMMY_SP, ErrorGuaranteed, Ident, Span, Symbol, kw, respan, sym};
 use thin_vec::{ThinVec, thin_vec};
 use tracing::debug;
@@ -126,8 +125,11 @@ impl<'a> Parser<'a> {
         force_collect: ForceCollect,
         allow_const_block_items: AllowConstBlockItems,
     ) -> PResult<'a, Option<Box<Item>>> {
-        let fn_parse_mode =
-            FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true };
+        let fn_parse_mode = FnParseMode {
+            req_name: ParamNameRequired::Yes,
+            context: FnContext::Free,
+            req_body: true,
+        };
         self.parse_item_(fn_parse_mode, force_collect, allow_const_block_items)
             .map(|i| i.map(Box::new))
     }
@@ -1186,8 +1188,11 @@ impl<'a> Parser<'a> {
         &mut self,
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<AssocItem>>>> {
-        let fn_parse_mode =
-            FnParseMode { req_name: |_, _| true, context: FnContext::Impl, req_body: true };
+        let fn_parse_mode = FnParseMode {
+            req_name: ParamNameRequired::Yes,
+            context: FnContext::Impl,
+            req_body: true,
+        };
         self.parse_assoc_item(fn_parse_mode, force_collect)
     }
 
@@ -1196,7 +1201,7 @@ impl<'a> Parser<'a> {
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<AssocItem>>>> {
         let fn_parse_mode = FnParseMode {
-            req_name: |edition, _| edition >= Edition::Edition2018,
+            req_name: ParamNameRequired::InRust2018AndBeyond,
             context: FnContext::Trait,
             req_body: false,
         };
@@ -1461,7 +1466,7 @@ impl<'a> Parser<'a> {
         force_collect: ForceCollect,
     ) -> PResult<'a, Option<Option<Box<ForeignItem>>>> {
         let fn_parse_mode = FnParseMode {
-            req_name: |_, is_dot_dot_dot| is_dot_dot_dot == IsDotDotDot::No,
+            req_name: ParamNameRequired::ExceptDotDotDot,
             context: FnContext::Free,
             req_body: false,
         };
@@ -2355,8 +2360,11 @@ impl<'a> Parser<'a> {
                 let inherited_vis =
                     Visibility { span: DUMMY_SP, kind: VisibilityKind::Inherited, tokens: None };
                 // We use `parse_fn` to get a span for the function
-                let fn_parse_mode =
-                    FnParseMode { req_name: |_, _| true, context: FnContext::Free, req_body: true };
+                let fn_parse_mode = FnParseMode {
+                    req_name: ParamNameRequired::Yes,
+                    context: FnContext::Free,
+                    req_body: true,
+                };
                 match self.parse_fn(
                     &mut AttrVec::new(),
                     fn_parse_mode,
@@ -2616,7 +2624,16 @@ impl<'a> Parser<'a> {
 /// were allowed to omit parameter names. In 2018, they became required. It also accepts an
 /// `IsDotDotDot` parameter, as `extern` function declarations and function pointer types are
 /// allowed to omit the name of the `...` but regular function items are not.
-type ReqName = fn(Edition, IsDotDotDot) -> bool;
+
+// FIXME(fmease): This is now a defunctionalized for convenience.
+//                Decide if we want to go back to a closure.
+#[derive(Clone, Copy)]
+pub(crate) enum ParamNameRequired {
+    Yes,
+    InRust2018AndBeyond,
+    ExceptDotDotDot,
+    NoAndDisallowMut,
+}
 
 #[derive(Copy, Clone, PartialEq)]
 pub(crate) enum IsDotDotDot {
@@ -2647,18 +2664,7 @@ pub(crate) struct FnParseMode {
     ///        |
     ///        if req_name returns true, this is an error
     /// ```
-    ///
-    /// Calling this function pointer should only return false if:
-    ///
-    ///   * The item is being parsed inside of a trait definition.
-    ///     Within an impl block or a module, it should always evaluate
-    ///     to true.
-    ///   * The span is from Edition 2015. In particular, you can get a
-    ///     2015 span inside a 2021 crate using macros.
-    ///
-    /// Or if `IsDotDotDot::Yes`, this function will also return `false` if the item being parsed
-    /// is inside an `extern` block.
-    pub(super) req_name: ReqName,
+    pub(super) req_name: ParamNameRequired,
     /// The context in which this function is parsed, used for diagnostics.
     /// This indicates the fn is a free function or method and so on.
     pub(super) context: FnContext,
@@ -3352,10 +3358,17 @@ impl<'a> Parser<'a> {
             } else {
                 IsDotDotDot::No
             };
-            let is_name_required = (fn_parse_mode.req_name)(
-                this.token.span.with_neighbor(this.prev_token.span).edition(),
-                is_dot_dot_dot,
-            );
+            let is_name_required = match fn_parse_mode.req_name {
+                ParamNameRequired::Yes => true,
+                ParamNameRequired::InRust2018AndBeyond => this
+                    .token
+                    .span
+                    .with_neighbor(this.prev_token.span)
+                    .edition()
+                    .at_least_rust_2018(),
+                ParamNameRequired::ExceptDotDotDot => matches!(is_dot_dot_dot, IsDotDotDot::No),
+                ParamNameRequired::NoAndDisallowMut => false,
+            };
             let is_name_required = if is_name_required && is_dot_dot_dot == IsDotDotDot::Yes {
                 this.psess.buffer_lint(
                     VARARGS_WITHOUT_PATTERN,
@@ -3368,7 +3381,14 @@ impl<'a> Parser<'a> {
                 is_name_required
             };
 
+<<<<<<< Updated upstream
             let (pat, ty) = if is_name_required || this.is_named_param() {
+=======
+            // XXX FIXME: ugly af
+            let allow_mut = !matches!(fn_parse_mode.req_name, ParamNameRequired::NoAndDisallowMut);
+
+            let (pat, ty) = if is_name_required || this.is_named_param(allow_mut) {
+>>>>>>> Stashed changes
                 debug!("parse_param_general parse_pat (is_name_required:{})", is_name_required);
                 let (pat, colon) = this.parse_fn_param_pat_colon()?;
                 if !colon {
