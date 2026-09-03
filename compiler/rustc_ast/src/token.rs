@@ -310,7 +310,7 @@ impl LitKind {
 }
 
 pub fn ident_can_begin_expr(name: Symbol, span: Span, kind: IdentKind) -> bool {
-    // We don't care about forced keywords that are gated behind `builtin_syntax`.
+    // We don't care about forced keywords that are gated behind `internal_syntax`.
 
     let ident_token = Token::new(Ident(name, kind), span);
 
@@ -344,7 +344,7 @@ pub fn ident_can_begin_expr(name: Symbol, span: Span, kind: IdentKind) -> bool {
 }
 
 fn ident_can_begin_type(name: Symbol, span: Span, kind: IdentKind) -> bool {
-    // We don't care about forced keywords that are gated behind `builtin_syntax`.
+    // We don't care about forced keywords that are gated behind `internal_syntax`.
 
     let ident_token = Token::new(Ident(name, kind), span);
 
