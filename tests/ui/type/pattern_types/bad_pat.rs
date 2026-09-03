@@ -12,7 +12,7 @@ type Wild = pattern_type!(() is _);
 
 // FIXME: confusing diagnostic because `not` can be a binding
 type NonNull = pattern_type!(*const () is not null);
-//~^ ERROR: expected one of `@` or `|`, found `null`
+//~^ ERROR: expected one of
 //~| ERROR: pattern not supported in pattern types
 
 type NonNull2 = pattern_type!(*const () is !nil);

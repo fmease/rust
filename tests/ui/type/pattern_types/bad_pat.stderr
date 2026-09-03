@@ -36,17 +36,23 @@ error: pattern not supported in pattern types
 LL | type NonNull = pattern_type!(*const () is not null);
    |                                           ^^^
 
-error: expected one of `@` or `|`, found `null`
+error: expected one of `)`, `@`, or `|`, found `null`
   --> $DIR/bad_pat.rs:14:47
    |
 LL | type NonNull = pattern_type!(*const () is not null);
-   |                                               ^^^^ expected one of `@` or `|`
+   |                -------------------------------^^^^-
+   |                |                              |
+   |                |                              expected one of `)`, `@`, or `|`
+   |                this macro call doesn't expand to a type
 
 error: expected `null`, found `nil`
   --> $DIR/bad_pat.rs:18:45
    |
 LL | type NonNull2 = pattern_type!(*const () is !nil);
-   |                                             ^^^ expected `null`
+   |                 ----------------------------^^^-
+   |                 |                           |
+   |                 |                           expected `null`
+   |                 this macro call doesn't expand to a type
 
 error: aborting due to 6 previous errors
 

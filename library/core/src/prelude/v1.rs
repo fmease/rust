@@ -106,7 +106,7 @@ pub use crate::log_syntax;
 
 #[unstable(feature = "pattern_type_macro", issue = "123646")]
 #[doc(no_inline)]
-pub use crate::pattern_type;
+pub use crate::pat::pattern_type;
 
 #[unstable(
     feature = "trace_macros",
