@@ -310,6 +310,8 @@ impl LitKind {
 }
 
 pub fn ident_can_begin_expr(name: Symbol, span: Span, kind: IdentKind) -> bool {
+    // We don't care about forced keywords that are gated behind `builtin_syntax`.
+
     let ident_token = Token::new(Ident(name, kind), span);
 
     !ident_token.is_reserved_ident()
