@@ -3688,9 +3688,7 @@ impl<'a> Parser<'a> {
     fn is_try_block(&self) -> bool {
         self.token.is_keyword(kw::Try)
             && self.look_ahead(1, |t| {
-                *t == token::OpenBrace
-                    || t.is_metavar_block()
-                    || t.kind == TokenKind::Ident(sym::bikeshed, IdentIsRaw::No)
+                *t == token::OpenBrace || t.is_metavar_block() || t.is_keyword(sym::bikeshed)
             })
             && self.token_uninterpolated_span().at_least_rust_2018()
     }
